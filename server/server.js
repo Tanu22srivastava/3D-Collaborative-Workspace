@@ -17,12 +17,12 @@ app.get('/', (req, res) => {
 });
 
 let users = {};
-let stickyNotes = []; // Store sticky notes for new users
+let stickyNotes = {};
 
 io.on('connection', (socket) => {
     console.log(`User Connected: ${socket.id}`);
     users[socket.id] = { 
-        position: { x: 0, y: 0, z: 0 }, 
+        position: { x: 0, y: 0.2, z: 0 }, 
         color: randomColor() 
     };
 
@@ -30,7 +30,7 @@ io.on('connection', (socket) => {
     socket.emit('existingUsers', users);
     
     // Send existing sticky notes to new user
-    stickyNotes.forEach(note => {
+    Object.values(stickyNotes).forEach(note => {
         socket.emit('addSticky', note);
     });
 
@@ -55,16 +55,33 @@ io.on('connection', (socket) => {
     });
 
     socket.on('newSticky', (data) => {
-        // Store the sticky note
-        stickyNotes.push(data);
+        console.log(`Received newSticky from ${socket.id}:`, data);
+
+        stickyNotes[data.id] = {
+            id: data.id,
+            position: data.position,
+            text: data.text
+        };
         
-        // Broadcast to all other users (not the sender)
-        socket.broadcast.emit('addSticky', data);
+        socket.broadcast.emit('addSticky', stickyNotes[data.id]);
+    });
+
+    socket.on('moveSticky', (data) => {
+        console.log(`Received moveSticky from ${socket.id}:`, data);
+        
+        if (stickyNotes[data.id]) {
+            stickyNotes[data.id].position = data.position;
+            
+            socket.broadcast.emit('stickyMoved', {
+                id: data.id,
+                position: data.position
+            });
+        }
     });
 });
 
 function randomColor() {
-    const colors = ['#ff0000', '#00ff00', '#0000ff', '#ffff00', '#ff00ff', '#00ffff', '#ffa500', '#800080'];
+    const colors = [0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0xff00ff, 0x00ffff, 0xffa500, 0x800080];
     return colors[Math.floor(Math.random() * colors.length)];
 }
 

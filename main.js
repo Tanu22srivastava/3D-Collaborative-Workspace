@@ -81,7 +81,7 @@ window.addEventListener('resize', () => {
 
 socket.on('existingUsers', (users) => {
     for (const id in users) {
-        if (id === socket.id) continue; // Don't add self
+        if (id === socket.id) continue;
         createOtherUser(id, users[id]);
     }
 });
@@ -110,14 +110,17 @@ function createOtherUser(id, userData) {
     const mesh = new THREE.Mesh(geometry, material);
     mesh.position.set(
         userData.position?.x || 0,
-        userData.position?.y || 0,
+        userData.position?.y || 0.2,
         userData.position?.z || 0
     );
     scene.add(mesh);
     otherUsers[id] = mesh;
 }
 
-function createStickyNote(position, text = "New Note") {
+// Fixed variable name
+const stickyNotes = {};
+
+function createStickyNote(position, text = "New Note", id = null) {
     const width = 1;
     const height = 0.6;
 
@@ -140,36 +143,105 @@ function createStickyNote(position, text = "New Note") {
     note.position.copy(position);
     note.position.y += 0.4;
     scene.add(note);
+
+    const noteId = id || crypto.randomUUID();
+    stickyNotes[noteId] = note;
+    note.userData.id = noteId;
     
     return note;
 }
 
-window.addEventListener('click', (e) => {
+let draggingNote = null;
+let isDragging = false;
+
+window.addEventListener('mousedown', (e) => {
     mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
     mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
-
     raycaster.setFromCamera(mouse, camera);
+
+    const notes = Object.values(stickyNotes);
+    const intersects = raycaster.intersectObjects(notes);
+    
+    if (intersects.length > 0) {
+        draggingNote = intersects[0].object;
+        isDragging = true;
+        e.preventDefault(); // Prevent default behavior
+        console.log('Started dragging note:', draggingNote.userData.id);
+    }
+});
+
+window.addEventListener('mousemove', (e) => {
+    if (!draggingNote || !isDragging) return;
+
+    mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+
     const intersects = raycaster.intersectObject(plane);
     if (intersects.length > 0) {
         const point = intersects[0].point;
-        createStickyNote(point);
-        
-        // Emit to server for other users
-        if (socket && socket.connected) {
-            socket.emit('newSticky', {
-                position: {
-                    x: point.x,
-                    y: point.y,
-                    z: point.z
-                },
-                text: "New Note"
-            });
+        draggingNote.position.set(point.x, point.y + 0.4, point.z);
+
+        socket.emit('moveSticky', {
+            id: draggingNote.userData.id,
+            position: {
+                x: point.x,
+                y: point.y,
+                z: point.z
+            }
+        });
+    }
+});
+
+window.addEventListener('mouseup', (e) => {
+    if (isDragging) {
+        console.log('Stopped dragging note');
+        isDragging = false;
+        draggingNote = null;
+    }
+});
+
+window.addEventListener('click', (e) => {
+    if (isDragging) return;
+    
+    mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+
+    const notes = Object.values(stickyNotes);
+    const noteIntersects = raycaster.intersectObjects(notes);
+    
+    if (noteIntersects.length === 0) {
+        const planeIntersects = raycaster.intersectObject(plane);
+        if (planeIntersects.length > 0) {
+            const point = planeIntersects[0].point;
+            const noteId = crypto.randomUUID();
+            
+            createStickyNote(point, "New Note", noteId);
+            
+            if (socket && socket.connected) {
+                socket.emit('newSticky', {
+                    id: noteId,
+                    position: {
+                        x: point.x,
+                        y: point.y,
+                        z: point.z
+                    },
+                    text: "New Note"
+                });
+            }
         }
     }
 });
 
-// Listen for sticky notes from other users
 socket.on('addSticky', (data) => {
     const pos = new THREE.Vector3(data.position.x, data.position.y, data.position.z);
-    createStickyNote(pos, data.text);
+    createStickyNote(pos, data.text, data.id);
+});
+
+socket.on('stickyMoved', (data) => {
+    const note = stickyNotes[data.id];
+    if (note) {
+        note.position.set(data.position.x, data.position.y + 0.4, data.position.z);
+    }
 });
