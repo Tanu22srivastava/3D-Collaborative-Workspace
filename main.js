@@ -1,6 +1,9 @@
 const socket = io('http://localhost:3000');
 const otherUsers = {};
 
+const raycaster = new THREE.Raycaster();
+const mouse = new THREE.Vector2();
+
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(
     75,
@@ -120,3 +123,41 @@ function createOtherUser(id, userData) {
   scene.add(mesh);
   otherUsers[id] = mesh;
 }
+
+function createStickyNote(position, text="New Note"){
+    const width=1;
+    const height= 0.6;
+
+    const canvas= document.createElement('canvas');
+    canvas.width=256;
+    canvas.height=158;
+
+    const ctx= canvas.getContext('2d');
+    ctx.fillStyle= '#ffff88';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillStyle = '#000';
+    ctx.font = '20px Arial';
+    ctx.fillText(text, 10, 50);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    const material=new THREE.MeshBasicMaterial({ map: texture, side: THREE.DoubleSide });
+    const geometry = new THREE.PlaneGeometry(width, height);
+    const note = new THREE.Mesh(geometry, material);
+
+    note.position.copy(position);
+    note.position.y +=0.4;
+    scene.add(note);
+}
+
+window.addEventListener('click', (e) => {
+  mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+  mouse.y = - (e.clientY / window.innerHeight) * 2 + 1;
+
+  raycaster.setFromCamera(mouse, camera);
+  const intersects = raycaster.intersectObject(plane);
+  if (intersects.length > 0) {
+    const point = intersects[0].point;
+    createStickyNote(point);
+  }
+});
+
