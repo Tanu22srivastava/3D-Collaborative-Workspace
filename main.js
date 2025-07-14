@@ -433,6 +433,42 @@ window.addEventListener('click', (e) => {
 });
 
 
+window.addEventListener('contextmenu', (e) => {
+    e.preventDefault();
+
+    mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+    raycaster.setFromCamera(mouse, camera);
+
+    const meshes = Object.values(stickyNotes).map(note => note.mesh);
+    const intersects = raycaster.intersectObjects(meshes);
+
+    if (intersects.length > 0) {
+        const stickyNote = getStickyNoteFromMesh(intersects[0].object);
+        if (!stickyNote) return;
+
+        const confirmDelete = confirm(`Delete sticky note?\n"${stickyNote.getText()}"`);
+        if (confirmDelete) {
+            // Delete locally
+            stickyNote.destroy();
+
+            // Notify server
+            socket.emit('deleteSticky', { id: stickyNote.id });
+        }
+    }
+});
+
+
+socket.on('stickyDeleted', ({ id }) => {
+    const stickyNote = stickyNotes[id];
+    if (stickyNote) {
+        stickyNote.destroy();
+        console.log(`StickyNote ${id} deleted by another user`);
+    }
+});
+
+
+
 socket.on('addSticky', (data) => {
     console.log(`Received addSticky event:`, data);
     const pos = new THREE.Vector3(data.position.x, data.position.y, data.position.z);

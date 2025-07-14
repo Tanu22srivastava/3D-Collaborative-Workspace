@@ -94,6 +94,17 @@ io.on('connection', (socket) => {
             console.log(`ERROR: Note ${data.id} not found in server storage!`);
         }
     });
+
+    socket.on('deleteSticky', (data) => {
+    if (stickyNotes[data.id]) {
+        console.log(`Deleting sticky note ${data.id} from server`);
+        delete stickyNotes[data.id];
+
+        // Inform others
+        socket.broadcast.emit('stickyDeleted', { id: data.id });
+    }
+});
+
     
 });
 
