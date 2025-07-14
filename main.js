@@ -14,11 +14,15 @@ const renderer = new THREE.WebGLRenderer();
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
-const gridHelper = new THREE.GridHelper(10, 10);
+// const controls = new OrbitControls(camera, renderer.domElement);
+// controls.enableDamping = true;
+// controls.target.copy(avatar.position);
+
+const gridHelper = new THREE.GridHelper(50, 50);
 scene.add(gridHelper);
 scene.background = new THREE.Color(0xf0f0f0);
 
-const planegem = new THREE.PlaneGeometry(10, 10);
+const planegem = new THREE.PlaneGeometry(50, 50);
 const planeMaterial = new THREE.MeshStandardMaterial({ color: 0xaaaaaa, side: THREE.DoubleSide });
 const plane = new THREE.Mesh(planegem, planeMaterial);
 plane.rotation.x = -Math.PI / 2;
@@ -62,10 +66,21 @@ scene.add(ambientLight);
 
 camera.position.set(3, 3, 5);
 
+const stickyNotes = {};
+
 function animate() {
     requestAnimationFrame(animate);
     avatar.position.x += moveX;
     avatar.position.z += moveZ;
+    camera.position.x = avatar.position.x + 3;
+    camera.position.z = avatar.position.z + 5;
+    camera.lookAt(avatar.position);
+
+    Object.values(stickyNotes).forEach(note => {
+    note.mesh.lookAt(camera.position);
+    });
+
+    // controls.update();
     socket.emit('updatePosition', {
         x: avatar.position.x,
         y: avatar.position.y,
@@ -117,10 +132,30 @@ function createOtherUser(id, userData) {
         userData.position?.z || 0
     );
     scene.add(mesh);
+    const canvas = document.createElement('canvas');
+    canvas.width = 1024;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height); // Transparent background
+
+    ctx.fillStyle = 'white'; // Or another color for contrast
+    ctx.font = 'bold 96px Arial';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(id.substring(0, 5), canvas.width / 2, canvas.height / 2);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+    const spriteMaterial = new THREE.SpriteMaterial({ map: texture, transparent: true });
+    const sprite = new THREE.Sprite(spriteMaterial);
+    sprite.scale.set(4, 1, 1); // Make it much bigger
+    sprite.position.set(0, 0.6, 0);
+
+    mesh.add(sprite);
     otherUsers[id] = mesh;
 }
 
-const stickyNotes = {};
+
 
 class StickyNote {
     constructor(position, text = "New Note", id = null) {
@@ -142,19 +177,31 @@ class StickyNote {
     
     createMesh() {
         this.canvas = document.createElement('canvas');
-        this.canvas.width = 256;
-        this.canvas.height = 158;
+        this.canvas.width = 1024; // Higher resolution
+        this.canvas.height = 632;
         
+        const ctx = this.canvas.getContext('2d');
+        // Use a large font size
+        ctx.font = '72px Arial'; // Try 72px or higher
+        ctx.fillStyle = '#000';
+        ctx.fillText(this.text, 40, 120); // Use larger coordinates
+
         this.texture = new THREE.CanvasTexture(this.canvas);
+        this.texture.minFilter = THREE.NearestFilter;
+        this.texture.magFilter = THREE.NearestFilter;
+        this.texture.needsUpdate = true;
+
         const material = new THREE.MeshBasicMaterial({ 
             map: this.texture, 
-            side: THREE.DoubleSide 
+            side: THREE.DoubleSide,
+            transparent: true
         });
-        
-        const geometry = new THREE.PlaneGeometry(1, 0.6);
+        const geometry = new THREE.PlaneGeometry(2, 1.2); // Larger note
         this.mesh = new THREE.Mesh(geometry, material);
         this.mesh.position.copy(this.position);
         this.mesh.position.y += 0.4;
+        // If you want the note to always face the camera:
+        this.mesh.lookAt(camera.position);
         
         this.mesh.userData.stickyNote = this;
         this.mesh.userData.id = this.id;
@@ -163,6 +210,9 @@ class StickyNote {
     updateVisual() {
         console.log(` updateVisual() called for ${this.id} with text: "${this.text}"`);
         const ctx = this.canvas.getContext('2d');
+
+        this.canvas.width = 512;
+        this.canvas.height = 320;
         
         ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
         
@@ -170,22 +220,13 @@ class StickyNote {
         ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
         
         ctx.strokeStyle = '#e6d55a';
-        ctx.lineWidth = 2;
+        ctx.lineWidth = 8;
         ctx.strokeRect(0, 0, this.canvas.width, this.canvas.height);
         
         ctx.fillStyle = '#000';
-        ctx.font = '18px Arial';
+        ctx.font = 'bold 72px Arial';
         ctx.textAlign = 'left';
-        
-        const lines = this.text.split('\n');
-        const lineHeight = 24;
-        const startY = 30;
-        
-        lines.forEach((line, index) => {
-            if (index < 5) {
-                ctx.fillText(line.substring(0, 25), 10, startY + (index * lineHeight));
-            }
-        });
+        ctx.fillText(this.text, 40, 120);
         
         this.texture.needsUpdate = true;
         
