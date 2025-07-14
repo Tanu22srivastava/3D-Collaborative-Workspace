@@ -70,11 +70,19 @@
     
     <div class="instructions">
         <h3>3D Collaborative Workspace</h3>
-        <div>🖱️ Click: Create sticky note</div>
-        <div>🖱️ Double-click note: Edit text</div>
-        <div>🖱️ Drag note: Move around</div>
-        <div>⌨️ Arrow keys: Move avatar</div>
+        <div> Click: Create sticky note</div>
+        <div> Double-click note: Edit text</div>
+        <div> Drag note: Move around</div>
+        <div>⌨ Arrow keys: Move avatar</div>
+        <button id="viewAllBtn"> View All Workspaces</button>
+        <div id="workspaceList" style="display:none; position: absolute; top: 50px; left: 20px; background: white; padding: 10px; border: 1px solid #ccc; max-height: 200px; overflow-y: auto;"></div>
+
     </div>
+
+    <button id="saveBtn"> Save Workspace</button>
+    <input id="workspaceId" placeholder="Enter ID to load" />
+    <button id="loadBtn"> Load Workspace</button>
+
     
     <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>

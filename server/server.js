@@ -1,7 +1,11 @@
+require('dotenv').config();
 const express = require('express');
 const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
+const mongoose = require('mongoose');
+const workspaceRoutes = require('./routes/workspace');
+
 
 const app = express();
 const server = http.createServer(app);
@@ -12,9 +16,28 @@ const io = new Server(server, {
     }
 });
 
+
+
+
+app.use(cors());
+app.use(express.json());
+app.use('/uploads', express.static('uploads'));
+
+
+app.use('/api/workspace', workspaceRoutes);
+
+
+
 app.get('/', (req, res) => {
     res.send('Socket.IO Server is Running');
 });
+
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log('Connected to MongoDB Atlas'))
+  .catch((err) => console.error('MongoDB connection error:', err));
+
+
+
 
 let users = {};
 let stickyNotes = {};
@@ -100,7 +123,6 @@ io.on('connection', (socket) => {
         console.log(`Deleting sticky note ${data.id} from server`);
         delete stickyNotes[data.id];
 
-        // Inform others
         socket.broadcast.emit('stickyDeleted', { id: data.id });
     }
 });
@@ -116,4 +138,9 @@ function randomColor() {
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`Socket.IO server running on port ${PORT}`);
+});
+
+
+app.use((req, res) => {
+  res.status(404).json({ success: false, message: 'Route not found' });
 });

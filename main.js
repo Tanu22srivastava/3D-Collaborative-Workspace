@@ -1,4 +1,4 @@
-const socket = io('http://localhost:3000');
+const socket = io('http://localhost:3000', { transports: ['websocket'] });
 
 let editingNote = null;
 const editBoxContainer = document.getElementById('editBoxContainer');
@@ -37,6 +37,15 @@ document.addEventListener('keydown', (e) => {
     if (e.key == 'ArrowDown') moveZ = 0.05;
     if (e.key == "ArrowLeft") moveX = -0.05;
     if (e.key == 'ArrowRight') moveX = 0.05;
+
+    if (e.key === 's' && e.ctrlKey) {
+        e.preventDefault();
+        saveWorkspace(); // Ctrl+S to save
+    }
+    if (e.key === 'l' && e.ctrlKey) {
+        e.preventDefault();
+        loadWorkspace('YOUR_WORKSPACE_ID'); // Replace with your saved _id
+    }
 });
 
 document.addEventListener('keyup', (e) => {
@@ -152,7 +161,7 @@ class StickyNote {
     }
     
     updateVisual() {
-        console.log(`🔁 updateVisual() called for ${this.id} with text: "${this.text}"`);
+        console.log(` updateVisual() called for ${this.id} with text: "${this.text}"`);
         const ctx = this.canvas.getContext('2d');
         
         ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
@@ -459,6 +468,80 @@ window.addEventListener('contextmenu', (e) => {
 });
 
 
+function saveWorkspace(name) {
+    const notes = Object.values(stickyNotes).map(note => ({
+        id: note.id,
+        text: note.text,
+        position: note.position
+    }));
+
+    const usersArray = Object.entries(otherUsers).map(([id, mesh]) => ({
+        id,
+        position: mesh.position,
+        color: mesh.material.color.getHex()
+    }));
+
+    fetch('http://localhost:3000/api/workspace/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            name: name || "Untitled Workspace",
+            notes,
+            users: usersArray
+        })
+    })
+    .then(res => res.json())
+    .then(data => {
+        if (data.success) {
+            alert(` Workspace saved! ID: ${data.id}`);
+        } else {
+            alert(" Error saving workspace.");
+        }
+    })
+    .catch(err => {
+        console.error(" Save error:", err);
+        alert(" Save failed.");
+    });
+}
+
+
+
+const loadWorkspace = async (id) => {
+  console.log('loadWorkspace called with id:', id);
+  try {
+    const response = await fetch(`http://localhost:3000/api/workspace/${id}`);
+    const data = await response.json();
+    console.log('Raw response data:', data);
+
+    const ws = data.workspace;
+    console.log('Loaded workspace:', ws);
+
+    if (!ws || !ws.notes) {
+      alert(data.error || "Workspace not found.");
+      return;
+    }
+
+    // Clear existing sticky notes
+    Object.values(stickyNotes).forEach(note => note.destroy());
+    Object.keys(stickyNotes).forEach(key => delete stickyNotes[key]);
+
+    ws.notes.forEach(note => {
+      const pos = new THREE.Vector3(note.position.x, note.position.y, note.position.z);
+      createStickyNote(pos, note.text, note.id);
+    });
+
+    alert(" Workspace loaded.");
+  } catch (err) {
+    console.error(" Load failed", err);
+    alert("Error loading workspace.");
+  }
+};
+
+
+
+
+
+
 socket.on('stickyDeleted', ({ id }) => {
     const stickyNote = stickyNotes[id];
     if (stickyNote) {
@@ -494,3 +577,109 @@ socket.on('stickyTextUpdated', (data) => {
         stickyNote.setText(data.text);
     }
 });
+
+
+document.getElementById('saveBtn').addEventListener('click', async () => {
+    const notes = Object.values(stickyNotes).map(note => ({
+        id: note.id,
+        text: note.getText(),
+        position: {
+            x: note.position.x,
+            y: note.position.y,
+            z: note.position.z
+        }
+    }));
+
+    const usersPayload = Object.entries(otherUsers).map(([id, mesh]) => ({
+        id,
+        position: {
+            x: mesh.position.x,
+            y: mesh.position.y,
+            z: mesh.position.z
+        },
+        color: mesh.material.color.getHex()
+    }));
+
+    const payload = {
+        name: "My 3D Workspace",
+        notes,
+        users: usersPayload
+    };
+
+    try {
+        const res = await fetch('http://localhost:3000/api/workspace/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const result = await res.json();
+        alert(`Saved! Workspace ID:\n${result.id}`);
+    } catch (err) {
+        console.error(" Save failed", err);
+        alert("Error saving workspace.");
+    }
+});
+
+
+document.getElementById('loadBtn').addEventListener('click', async () => {
+    const id = document.getElementById('workspaceId').value.trim();
+    if (!id) return alert("Enter workspace ID!");
+
+    try {
+        const res = await fetch(`http://localhost:3000/api/workspace/${id}`);
+        const data = await res.json();
+
+        // Clear current scene sticky notes
+        Object.values(stickyNotes).forEach(note => note.destroy());
+        Object.keys(stickyNotes).forEach(key => delete stickyNotes[key]);
+
+        const ws = data.workspace; 
+        console.log('Loaded workspace:', ws);
+
+        if (!ws || !ws.notes) {
+          alert(data.error || "Workspace not found.");
+          return;
+        }
+
+        ws.notes.forEach(note => {
+            const pos = new THREE.Vector3(note.position.x, note.position.y, note.position.z);
+            createStickyNote(pos, note.text, note.id);
+        });
+
+        alert(" Workspace loaded.");
+    } catch (err) {
+        console.error(" Load failed", err);
+        alert("Error loading workspace.");
+    }
+});
+
+document.getElementById('viewAllBtn').addEventListener('click', async () => {
+    const listDiv = document.getElementById('workspaceList');
+    listDiv.style.display = listDiv.style.display === 'none' ? 'block' : 'none';
+
+    if (listDiv.innerHTML !== '') return; // already loaded once
+
+    try {
+        const res = await fetch('http://localhost:3000/api/workspace/all');
+        const result = await res.json();
+
+        if (!result.success) return alert(" Failed to load workspaces");
+
+        result.data.forEach(ws => {
+            const entry = document.createElement('div');
+            entry.innerHTML = `
+                <strong>${ws.name}</strong> (${ws._id})
+                <button onclick="loadWorkspace('${ws._id}')"> Load</button>
+                <hr/>
+            `;
+            listDiv.appendChild(entry);
+        });
+    } catch (err) {
+        console.error(" Error loading workspace list:", err);
+        alert("Error loading workspace list.");
+    }
+});
+
+
+
