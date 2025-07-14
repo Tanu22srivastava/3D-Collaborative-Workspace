@@ -26,15 +26,12 @@ io.on('connection', (socket) => {
         color: randomColor() 
     };
 
-    // Send existing users to new user
     socket.emit('existingUsers', users);
     
-    // Send existing sticky notes to new user
     Object.values(stickyNotes).forEach(note => {
         socket.emit('addSticky', note);
     });
 
-    // Broadcast new user to all other users
     socket.broadcast.emit('newUser', {
         id: socket.id,
         position: users[socket.id].position,
@@ -56,7 +53,7 @@ io.on('connection', (socket) => {
 
     socket.on('newSticky', (data) => {
         console.log(`Received newSticky from ${socket.id}:`, data);
-
+        
         stickyNotes[data.id] = {
             id: data.id,
             position: data.position,
@@ -78,6 +75,26 @@ io.on('connection', (socket) => {
             });
         }
     });
+
+    socket.on('updateStickyText', (data) => {
+        console.log(`Received updateStickyText from ${socket.id}:`, data);
+        
+        if (stickyNotes[data.id]) {
+            console.log(`Updating server storage: Note ${data.id} text from "${stickyNotes[data.id].text}" to "${data.text}"`);
+            stickyNotes[data.id].text = data.text;
+            console.log(`Server storage updated: Note ${data.id} text is now "${stickyNotes[data.id].text}"`);
+            
+            socket.broadcast.emit('stickyTextUpdated', {
+                id: data.id,
+                text: data.text
+            });
+            
+            console.log(`Broadcasted stickyTextUpdated for note ${data.id} with text "${data.text}"`);
+        } else {
+            console.log(`ERROR: Note ${data.id} not found in server storage!`);
+        }
+    });
+    
 });
 
 function randomColor() {
