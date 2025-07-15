@@ -5,6 +5,8 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const mongoose = require('mongoose');
 const workspaceRoutes = require('./routes/workspace');
+const voiceRoutes = require('./routes/voice');
+const authRoutes = require('./routes/auth');
 
 
 const app = express();
@@ -16,6 +18,9 @@ const io = new Server(server, {
     }
 });
 
+app.use(express.json()); 
+
+
 
 
 
@@ -23,14 +28,22 @@ app.use(cors());
 app.use(express.json());
 app.use('/uploads', express.static('uploads'));
 
+app.use((req, res, next) => {
+    req.io = io;
+    next();
+});
 
 app.use('/api/workspace', workspaceRoutes);
-
+app.use('/api/voice', voiceRoutes);
+app.use('/api/auth', authRoutes);
 
 
 app.get('/', (req, res) => {
     res.send('Socket.IO Server is Running');
 });
+
+
+
 
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('Connected to MongoDB Atlas'))

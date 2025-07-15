@@ -1,6 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const Workspace = require('../models/Workspace');
+const verifyToken = require('../middleware/auth');
 
 router.post('/save', async (req, res) => {
     try {
