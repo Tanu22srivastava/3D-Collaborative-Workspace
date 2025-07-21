@@ -721,6 +721,3 @@ document.getElementById('viewAllBtn').addEventListener('click', async () => {
         alert("Error loading workspace list.");
     }
 });
-
-
-
