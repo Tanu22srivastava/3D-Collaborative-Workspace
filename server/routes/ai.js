@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const { GoogleGenerativeAI } = require('@google/generative-ai');
-const Note = require('../models/Note');
+const Note = require('../models/Notes');
 const Workspace = require('../models/Workspace');
 const Session = require('../models/Session');
 const verifyToken = require('../middleware/auth');

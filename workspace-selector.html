@@ -1,0 +1,637 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Select Workspace - 3D Collaborative Space</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .workspace-container {
+            background: rgba(255, 255, 255, 0.95);
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+            width: 100%;
+            max-width: 600px;
+            position: relative;
+        }
+        
+        .workspace-container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #4ecdc4, #44a08d);
+            border-radius: 20px 20px 0 0;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .header h1 {
+            color: #333;
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+        
+        .user-info {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 15px;
+            margin-bottom: 30px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+        
+        .user-avatar {
+            width: 50px;
+            height: 50px;
+            border-radius: 50%;
+            background: linear-gradient(45deg, #4ecdc4, #44a08d);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 20px;
+        }
+        
+        .user-details h3 {
+            margin: 0;
+            color: #333;
+        }
+        
+        .user-details p {
+            margin: 5px 0 0 0;
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .workspace-options {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        
+        .workspace-option {
+            border: 2px solid #e9ecef;
+            border-radius: 15px;
+            padding: 30px 20px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            background: white;
+        }
+        
+        .workspace-option:hover {
+            border-color: #4ecdc4;
+            transform: translateY(-5px);
+            box-shadow: 0 10px 25px rgba(78, 205, 196, 0.2);
+        }
+        
+        .workspace-option.selected {
+            border-color: #4ecdc4;
+            background: rgba(78, 205, 196, 0.1);
+        }
+        
+        .option-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+        
+        .option-title {
+            font-size: 20px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 10px;
+        }
+        
+        .option-description {
+            color: #666;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+        
+        .workspace-input {
+            display: none;
+            margin-top: 20px;
+        }
+        
+        .workspace-input.active {
+            display: block;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+        }
+        
+        .form-group input {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e9ecef;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: all 0.3s ease;
+            outline: none;
+            box-sizing: border-box;
+        }
+        
+        .form-group input:focus {
+            border-color: #4ecdc4;
+            box-shadow: 0 0 0 3px rgba(78, 205, 196, 0.1);
+        }
+        
+        .workspace-id-display {
+            background: #f8f9fa;
+            border: 2px dashed #4ecdc4;
+            border-radius: 10px;
+            padding: 15px;
+            margin-top: 15px;
+            text-align: center;
+        }
+        
+        .workspace-id-display .label {
+            font-size: 14px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        
+        .workspace-id-display .id {
+            font-family: 'Courier New', monospace;
+            font-size: 18px;
+            font-weight: bold;
+            color: #4ecdc4;
+            word-break: break-all;
+        }
+        
+        .copy-btn {
+            background: #4ecdc4;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+            margin-top: 10px;
+            transition: background 0.3s ease;
+        }
+        
+        .copy-btn:hover {
+            background: #44a08d;
+        }
+        
+        .action-buttons {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+        }
+        
+        .btn {
+            padding: 15px 30px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #4ecdc4, #44a08d);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(78, 205, 196, 0.3);
+        }
+        
+        .btn-secondary {
+            background: #6c757d;
+            color: white;
+        }
+        
+        .btn-secondary:hover {
+            background: #545b62;
+        }
+        
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .error-message {
+            background: rgba(231, 76, 60, 0.1);
+            color: #e74c3c;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-size: 14px;
+            border-left: 4px solid #e74c3c;
+            display: none;
+        }
+        
+        .recent-workspaces {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #e9ecef;
+        }
+        
+        .recent-workspaces h3 {
+            color: #333;
+            margin-bottom: 15px;
+        }
+        
+        .recent-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            margin-bottom: 8px;
+            cursor: pointer;
+            transition: background 0.3s ease;
+        }
+        
+        .recent-item:hover {
+            background: #e9ecef;
+        }
+        
+        .recent-info h4 {
+            margin: 0;
+            color: #333;
+            font-size: 14px;
+        }
+        
+        .recent-info p {
+            margin: 2px 0 0 0;
+            color: #666;
+            font-size: 12px;
+        }
+        
+        .join-btn {
+            background: #4ecdc4;
+            color: white;
+            border: none;
+            padding: 8px 15px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+        
+        @media (max-width: 768px) {
+            .workspace-options {
+                grid-template-columns: 1fr;
+            }
+            
+            .action-buttons {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="workspace-container">
+        <div class="header">
+            <h1>🌐 Select Workspace</h1>
+        </div>
+        
+        <div class="user-info">
+            <div class="user-avatar" id="userAvatar"></div>
+            <div class="user-details">
+                <h3 id="userName"></h3>
+                <p id="userEmail"></p>
+            </div>
+        </div>
+        
+        <div id="error-message" class="error-message"></div>
+        
+        <div class="workspace-options">
+            <div class="workspace-option" onclick="selectOption('create')">
+                <div class="option-icon">🎨</div>
+                <div class="option-title">Create New Workspace</div>
+                <div class="option-description">Start fresh with your own 3D collaborative space</div>
+            </div>
+            
+            <div class="workspace-option" onclick="selectOption('join')">
+                <div class="option-icon">🔗</div>
+                <div class="option-title">Join Shared Workspace</div>
+                <div class="option-description">Enter a workspace ID to join an existing space</div>
+            </div>
+        </div>
+        
+        <!-- Create Workspace Form -->
+        <div id="create-input" class="workspace-input">
+            <div class="form-group">
+                <label for="workspace-name">Workspace Name</label>
+                <input type="text" id="workspace-name" placeholder="Enter workspace name" value="">
+            </div>
+            <div class="form-group">
+                <label for="workspace-description">Description (Optional)</label>
+                <input type="text" id="workspace-description" placeholder="Describe your workspace">
+            </div>
+        </div>
+        
+        <!-- Join Workspace Form -->
+        <div id="join-input" class="workspace-input">
+            <div class="form-group">
+                <label for="workspace-id">Workspace ID</label>
+                <input type="text" id="workspace-id" placeholder="Enter workspace ID to join">
+            </div>
+        </div>
+        
+        <div class="action-buttons">
+            <button class="btn btn-secondary" onclick="logout()">🚪 Logout</button>
+            <button class="btn btn-primary" id="continue-btn" onclick="continueToWorkspace()" disabled>
+                🚀 Enter Workspace
+            </button>
+        </div>
+        
+        <!-- Recent Workspaces -->
+        <div class="recent-workspaces" id="recent-workspaces" style="display: none;">
+            <h3>📚 Recent Workspaces</h3>
+            <div id="recent-list"></div>
+        </div>
+    </div>
+    
+    <script>
+        const API_BASE = 'http://localhost:3000/api';
+        let authToken = localStorage.getItem('authToken');
+        let currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+        let selectedOption = null;
+        let workspaceId = null;
+        
+        // Check authentication
+        if (!authToken) {
+            window.location.href = 'index.html';
+        }
+        
+        // Initialize user info
+        document.getElementById('userName').textContent = currentUser.username || 'User';
+        document.getElementById('userEmail').textContent = currentUser.email || '';
+        document.getElementById('userAvatar').textContent = (currentUser.username || 'U')[0].toUpperCase();
+        
+        // Set default workspace name
+        document.getElementById('workspace-name').value = `${currentUser.username}'s Workspace`;
+        
+        function selectOption(option) {
+            selectedOption = option;
+            
+            // Update UI
+            document.querySelectorAll('.workspace-option').forEach(el => el.classList.remove('selected'));
+            event.target.closest('.workspace-option').classList.add('selected');
+            
+            // Show/hide inputs
+            document.querySelectorAll('.workspace-input').forEach(el => el.classList.remove('active'));
+            document.getElementById(option + '-input').classList.add('active');
+            
+            // Enable continue button
+            document.getElementById('continue-btn').disabled = false;
+            
+            hideError();
+        }
+        
+        function showError(message) {
+            const errorDiv = document.getElementById('error-message');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+        }
+        
+        function hideError() {
+            document.getElementById('error-message').style.display = 'none';
+        }
+        
+        async function continueToWorkspace() {
+            if (!selectedOption) {
+                showError('Please select an option');
+                return;
+            }
+            
+            const continueBtn = document.getElementById('continue-btn');
+            continueBtn.disabled = true;
+            continueBtn.innerHTML = '🔄 Processing...';
+            
+            try {
+                if (selectedOption === 'create') {
+                    await createWorkspace();
+                } else if (selectedOption === 'join') {
+                    await joinWorkspace();
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                showError('Something went wrong. Please try again.');
+                continueBtn.disabled = false;
+                continueBtn.innerHTML = '🚀 Enter Workspace';
+            }
+        }
+        
+        async function createWorkspace() {
+            const name = document.getElementById('workspace-name').value.trim();
+            const description = document.getElementById('workspace-description').value.trim();
+            
+            if (!name) {
+                showError('Please enter a workspace name');
+                document.getElementById('continue-btn').disabled = false;
+                document.getElementById('continue-btn').innerHTML = '🚀 Enter Workspace';
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_BASE}/workspace/simple`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': authToken
+                    },
+                    body: JSON.stringify({ name, description })
+                });
+                
+                const data = await response.json();
+                if (data.success) {
+                    workspaceId = data.data._id;
+                    
+                    // DON'T save to recent workspaces yet - wait until user joins
+                    
+                    // Show workspace ID to user
+                    showWorkspaceId(workspaceId, name);
+                } else {
+                    showError('Failed to create workspace');
+                    document.getElementById('continue-btn').disabled = false;
+                    document.getElementById('continue-btn').innerHTML = '🚀 Enter Workspace';
+                }
+            } catch (error) {
+                showError('Network error. Please check your connection.');
+                document.getElementById('continue-btn').disabled = false;
+                document.getElementById('continue-btn').innerHTML = '🚀 Enter Workspace';
+            }
+        }
+        
+        async function joinWorkspace() {
+            const id = document.getElementById('workspace-id').value.trim();
+            
+            if (!id) {
+                showError('Please enter a workspace ID');
+                document.getElementById('continue-btn').disabled = false;
+                document.getElementById('continue-btn').innerHTML = '🚀 Enter Workspace';
+                return;
+            }
+            
+            // For now, we'll assume the workspace exists and proceed
+            // In a real app, you'd validate the workspace exists
+            workspaceId = id;
+            
+            // DON'T save to recent workspaces yet - wait until user joins
+            
+            // Go directly to workspace
+            proceedToWorkspace();
+        }
+        
+        function showWorkspaceId(id, name) {
+            const createInput = document.getElementById('create-input');
+            
+            const idDisplay = document.createElement('div');
+            idDisplay.className = 'workspace-id-display';
+            idDisplay.innerHTML = `
+                <div class="label">✅ Workspace Created! Share this ID with others:</div>
+                <div class="id">${id}</div>
+                <button class="copy-btn" onclick="copyWorkspaceId('${id}')">📋 Copy ID</button>
+            `;
+            
+            createInput.appendChild(idDisplay);
+            
+            // Update button to continue
+            const continueBtn = document.getElementById('continue-btn');
+            continueBtn.innerHTML = '🚀 Enter Workspace';
+            continueBtn.disabled = false;
+            continueBtn.onclick = proceedToWorkspace;
+        }
+        
+        function copyWorkspaceId(id) {
+            navigator.clipboard.writeText(id).then(() => {
+                const copyBtn = event.target;
+                const originalText = copyBtn.innerHTML;
+                copyBtn.innerHTML = '✅ Copied!';
+                setTimeout(() => {
+                    copyBtn.innerHTML = originalText;
+                }, 2000);
+            });
+        }
+        
+        function proceedToWorkspace() {
+            if (!workspaceId) {
+                showError('No workspace selected');
+                return;
+            }
+            
+            // NOW save to recent workspaces when user actually enters
+            const workspaceName = selectedOption === 'create' 
+                ? document.getElementById('workspace-name').value.trim() 
+                : 'Shared Workspace';
+            saveToRecentWorkspaces(workspaceId, workspaceName);
+            
+            // Store workspace ID and proceed
+            localStorage.setItem('currentWorkspaceId', workspaceId);
+            window.location.href = 'workspace.html';
+        }
+        
+        function saveToRecentWorkspaces(id, name) {
+            let recent = JSON.parse(localStorage.getItem('recentWorkspaces') || '[]');
+            
+            // Remove if already exists
+            recent = recent.filter(w => w.id !== id);
+            
+            // Add to beginning
+            recent.unshift({
+                id: id,
+                name: name,
+                joinedAt: new Date().toISOString()
+            });
+            
+            // Keep only last 5
+            recent = recent.slice(0, 5);
+            
+            localStorage.setItem('recentWorkspaces', JSON.stringify(recent));
+        }
+        
+        function loadRecentWorkspaces() {
+            const recent = JSON.parse(localStorage.getItem('recentWorkspaces') || '[]');
+            
+            // Only show recent workspaces if user has some
+            if (recent.length === 0) {
+                return; // Don't show the section at all
+            }
+            
+            document.getElementById('recent-workspaces').style.display = 'block';
+            const recentList = document.getElementById('recent-list');
+            
+            recentList.innerHTML = recent.map(workspace => `
+                <div class="recent-item">
+                    <div class="recent-info">
+                        <h4>${workspace.name}</h4>
+                        <p>ID: ${workspace.id} • Joined: ${new Date(workspace.joinedAt).toLocaleDateString()}</p>
+                    </div>
+                    <button class="join-btn" onclick="joinRecentWorkspace('${workspace.id}', '${workspace.name}')">
+                        Join
+                    </button>
+                </div>
+            `).join('');
+        }
+        
+        function joinRecentWorkspace(id, name) {
+            workspaceId = id;
+            saveToRecentWorkspaces(id, name);
+            proceedToWorkspace();
+        }
+        
+        function logout() {
+            localStorage.removeItem('authToken');
+            localStorage.removeItem('user');
+            localStorage.removeItem('isDemo');
+            localStorage.removeItem('currentWorkspaceId');
+            // Keep recent workspaces for convenience, but you can remove this line if you want to clear them
+            // localStorage.removeItem('recentWorkspaces');
+            window.location.href = 'index.html';
+        }
+        
+        // Load recent workspaces on page load
+        window.addEventListener('load', loadRecentWorkspaces);
+        
+        // Handle enter key in inputs
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !document.getElementById('continue-btn').disabled) {
+                continueToWorkspace();
+            }
+        });
+    </script>
+</body>
+</html>

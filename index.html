@@ -3,90 +3,462 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>3D Collaborative Workspace</title>
+    <title>3D Collaborative Workspace - Login</title>
     <style>
-        body { 
-            margin: 0; 
-            overflow: hidden; 
-            background: #000;
-            font-family: Arial, sans-serif;
-        }
-        canvas { 
-            display: block; 
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
         }
         
-        #editBoxContainer {
-            position: absolute;
-            display: none;
-            z-index: 1000;
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .auth-container {
             background: rgba(255, 255, 255, 0.95);
-            border-radius: 8px;
-            padding: 10px;
-            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.3);
-            border: 2px solid #ffeb3b;
+            backdrop-filter: blur(10px);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.2);
+            width: 100%;
+            max-width: 400px;
+            position: relative;
+            overflow: hidden;
         }
         
-        #editBox {
-            width: 200px;
-            height: 80px;
+        .auth-container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 4px;
+            background: linear-gradient(90deg, #4ecdc4, #44a08d);
+        }
+        
+        .logo {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        
+        .logo h1 {
+            color: #333;
+            font-size: 28px;
+            margin-bottom: 5px;
+        }
+        
+        .logo p {
+            color: #666;
             font-size: 14px;
-            font-family: Arial, sans-serif;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            padding: 8px;
-            resize: none;
-            outline: none;
-            background: #fff9c4;
         }
         
-        #editBox:focus {
-            border-color: #4CAF50;
-            box-shadow: 0 0 5px rgba(76, 175, 80, 0.3);
-        }
-        
-        .instructions {
-            position: fixed;
-            top: 20px;
-            left: 20px;
-            color: white;
-            background: rgba(0, 0, 0, 0.7);
-            padding: 15px;
+        .auth-tabs {
+            display: flex;
+            margin-bottom: 30px;
+            background: #f8f9fa;
             border-radius: 10px;
-            font-size: 14px;
-            z-index: 100;
+            padding: 4px;
         }
         
-        .instructions h3 {
-            margin: 0 0 10px 0;
+        .tab-button {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            background: transparent;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-weight: 500;
+        }
+        
+        .tab-button.active {
+            background: white;
             color: #4ecdc4;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 500;
+        }
+        
+        .form-group input {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e9ecef;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: all 0.3s ease;
+            outline: none;
+        }
+        
+        .form-group input:focus {
+            border-color: #4ecdc4;
+            box-shadow: 0 0 0 3px rgba(78, 205, 196, 0.1);
+        }
+        
+        .auth-button {
+            width: 100%;
+            padding: 15px;
+            background: linear-gradient(135deg, #4ecdc4, #44a08d);
+            border: none;
+            border-radius: 10px;
+            color: white;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin-bottom: 15px;
+        }
+        
+        .auth-button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(78, 205, 196, 0.3);
+        }
+        
+        .auth-button:disabled {
+            opacity: 0.7;
+            cursor: not-allowed;
+            transform: none;
+        }
+        
+        .demo-button {
+            width: 100%;
+            padding: 15px;
+            background: transparent;
+            border: 2px solid #4ecdc4;
+            border-radius: 10px;
+            color: #4ecdc4;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .demo-button:hover {
+            background: #4ecdc4;
+            color: white;
+        }
+        
+        .error-message {
+            color: #e74c3c;
+            background: rgba(231, 76, 60, 0.1);
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-size: 14px;
+            border-left: 4px solid #e74c3c;
+        }
+        
+        .success-message {
+            color: #27ae60;
+            background: rgba(39, 174, 96, 0.1);
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 15px;
+            font-size: 14px;
+            border-left: 4px solid #27ae60;
+        }
+        
+        .form-container {
+            display: none;
+        }
+        
+        .form-container.active {
+            display: block;
+        }
+        
+        .loading {
+            display: inline-block;
+            width: 16px;
+            height: 16px;
+            border: 2px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: white;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 10px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .features {
+            margin-top: 30px;
+            padding-top: 20px;
+            border-top: 1px solid #eee;
+        }
+        
+        .feature-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 10px;
+            color: #666;
+            font-size: 14px;
+        }
+        
+        .feature-icon {
+            width: 16px;
+            height: 16px;
+            background: #4ecdc4;
+            border-radius: 50%;
+            margin-right: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 10px;
         }
     </style>
 </head>
 <body>
-    <div id="editBoxContainer">
-        <textarea id="editBox" placeholder="Type your note here... Press Enter to save"></textarea>
-        <div style="font-size: 12px; color: #666; margin-top: 5px;">Press Enter to save, Shift+Enter for new line</div>
+    <div class="auth-container">
+        <div class="logo">
+            <h1>🌐 3D Workspace</h1>
+            <p>Collaborative 3D Environment</p>
+        </div>
+        
+        <div class="auth-tabs">
+            <button class="tab-button active" onclick="switchTab('login')">Login</button>
+            <button class="tab-button" onclick="switchTab('register')">Register</button>
+        </div>
+        
+        <div id="error-message" class="error-message" style="display: none;"></div>
+        <div id="success-message" class="success-message" style="display: none;"></div>
+        
+        <!-- Login Form -->
+        <div id="login-form" class="form-container active">
+            <form onsubmit="handleLogin(event)">
+                <div class="form-group">
+                    <label for="login-email">Email</label>
+                    <input type="email" id="login-email" required placeholder="Enter your email">
+                </div>
+                <div class="form-group">
+                    <label for="login-password">Password</label>
+                    <input type="password" id="login-password" required placeholder="Enter your password">
+                </div>
+                <button type="submit" class="auth-button" id="login-btn">
+                    Login to Workspace
+                </button>
+            </form>
+        </div>
+        
+        <!-- Register Form -->
+        <div id="register-form" class="form-container">
+            <form onsubmit="handleRegister(event)">
+                <div class="form-group">
+                    <label for="register-username">Username</label>
+                    <input type="text" id="register-username" required placeholder="Choose a username">
+                </div>
+                <div class="form-group">
+                    <label for="register-email">Email</label>
+                    <input type="email" id="register-email" required placeholder="Enter your email">
+                </div>
+                <div class="form-group">
+                    <label for="register-password">Password</label>
+                    <input type="password" id="register-password" required placeholder="Create a password">
+                </div>
+                <button type="submit" class="auth-button" id="register-btn">
+                    Create Account
+                </button>
+            </form>
+        </div>
+        
+        <button class="demo-button" onclick="demoLogin()">
+            🚀 Try Demo (Skip Registration)
+        </button>
+        
+        <div class="features">
+            <div class="feature-item">
+                <div class="feature-icon">🎮</div>
+                Real-time 3D collaboration
+            </div>
+            <div class="feature-item">
+                <div class="feature-icon">🎨</div>
+                3D models & drawing tools
+            </div>
+            <div class="feature-item">
+                <div class="feature-icon">🎤</div>
+                Voice chat integration
+            </div>
+            <div class="feature-item">
+                <div class="feature-icon">🤖</div>
+                AI assistant powered
+            </div>
+        </div>
     </div>
-    
-    <div class="instructions">
-        <h3>3D Collaborative Workspace</h3>
-        <div> Click: Create sticky note</div>
-        <div> Double-click note: Edit text</div>
-        <div> Drag note: Move around</div>
-        <div>⌨ Arrow keys: Move avatar</div>
-        <button id="viewAllBtn"> View All Workspaces</button>
-        <div id="workspaceList" style="display:none; position: absolute; top: 50px; left: 20px; background: white; padding: 10px; border: 1px solid #ccc; max-height: 200px; overflow-y: auto;"></div>
 
-    </div>
-
-    <button id="saveBtn"> Save Workspace</button>
-    <input id="workspaceId" placeholder="Enter ID to load" />
-    <button id="loadBtn"> Load Workspace</button>
-
-    
-    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
-    <script src="https://unpkg.com/three@0.149.0/build/three.min.js"></script>
-    <script src="https://unpkg.com/three@0.155.0/examples/js/controls/OrbitControls.js"></script>
-    <script src="main.js"></script>
+    <script>
+        const API_BASE = 'http://localhost:3000/api';
+        
+        function switchTab(tab) {
+            // Switch tab buttons
+            document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+            event.target.classList.add('active');
+            
+            // Switch forms
+            document.querySelectorAll('.form-container').forEach(form => form.classList.remove('active'));
+            document.getElementById(tab + '-form').classList.add('active');
+            
+            // Clear messages
+            hideMessage();
+        }
+        
+        function showError(message) {
+            const errorDiv = document.getElementById('error-message');
+            errorDiv.textContent = message;
+            errorDiv.style.display = 'block';
+            document.getElementById('success-message').style.display = 'none';
+        }
+        
+        function showSuccess(message) {
+            const successDiv = document.getElementById('success-message');
+            successDiv.textContent = message;
+            successDiv.style.display = 'block';
+            document.getElementById('error-message').style.display = 'none';
+        }
+        
+        function hideMessage() {
+            document.getElementById('error-message').style.display = 'none';
+            document.getElementById('success-message').style.display = 'none';
+        }
+        
+        function setLoading(buttonId, loading) {
+            const button = document.getElementById(buttonId);
+            if (loading) {
+                button.disabled = true;
+                button.innerHTML = '<span class="loading"></span>Processing...';
+            } else {
+                button.disabled = false;
+                button.innerHTML = buttonId === 'login-btn' ? 'Login to Workspace' : 'Create Account';
+            }
+        }
+        
+        async function handleLogin(event) {
+            event.preventDefault();
+            hideMessage();
+            setLoading('login-btn', true);
+            
+            const email = document.getElementById('login-email').value;
+            const password = document.getElementById('login-password').value;
+            
+            try {
+                const response = await fetch(`${API_BASE}/auth/login`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ email, password })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Store auth data
+                    localStorage.setItem('authToken', data.token);
+                    localStorage.setItem('user', JSON.stringify(data.user));
+                    
+                    showSuccess('Login successful! Redirecting to workspace...');
+                    
+                    setTimeout(() => {
+                        window.location.href = 'workspace-selector.html';
+                    }, 1000);
+                } else {
+                    showError(data.message || 'Login failed');
+                }
+            } catch (error) {
+                console.error('Login error:', error);
+                showError('Network error. Please check if the server is running.');
+            } finally {
+                setLoading('login-btn', false);
+            }
+        }
+        
+        async function handleRegister(event) {
+            event.preventDefault();
+            hideMessage();
+            setLoading('register-btn', true);
+            
+            const username = document.getElementById('register-username').value;
+            const email = document.getElementById('register-email').value;
+            const password = document.getElementById('register-password').value;
+            
+            try {
+                const response = await fetch(`${API_BASE}/auth/register`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ username, email, password })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    // Store auth data
+                    localStorage.setItem('authToken', data.token);
+                    localStorage.setItem('user', JSON.stringify(data.user));
+                    
+                    showSuccess('Account created! Redirecting to workspace...');
+                    
+                    setTimeout(() => {
+                        window.location.href = 'workspace-selector.html';
+                    }, 1000);
+                } else {
+                    showError(data.message || 'Registration failed');
+                }
+            } catch (error) {
+                console.error('Register error:', error);
+                showError('Network error. Please check if the server is running.');
+            } finally {
+                setLoading('register-btn', false);
+            }
+        }
+        
+        function demoLogin() {
+            // Create demo user credentials
+            const demoUser = {
+                _id: 'demo_user_' + Date.now(),
+                username: 'Demo User',
+                email: 'demo@workspace.com'
+            };
+            
+            const demoToken = 'demo_token_' + Date.now();
+            
+            // Store demo data
+            localStorage.setItem('authToken', demoToken);
+            localStorage.setItem('user', JSON.stringify(demoUser));
+            localStorage.setItem('isDemo', 'true');
+            
+            showSuccess('Demo mode activated! Redirecting...');
+            
+            setTimeout(() => {
+                window.location.href = 'workspace-selector.html';
+            }, 1000);
+        }
+        
+        // Check if already logged in
+        window.addEventListener('load', () => {
+            const token = localStorage.getItem('authToken');
+            if (token) {
+                showSuccess('Already logged in. Redirecting...');
+                setTimeout(() => {
+                    window.location.href = 'workspace-selector.html';
+                }, 1000);
+            }
+        });
+    </script>
 </body>
 </html>

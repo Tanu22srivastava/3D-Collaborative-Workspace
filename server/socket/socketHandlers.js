@@ -1,413 +1,183 @@
-const Note = require('../models/Note');
-const DrawingStroke = require('../models/DrawingStroke');
-const Model3D = require('../models/Model3D');
-const Session = require('../models/Session');
-const Workspace = require('../models/Workspace');
+require('dotenv').config();
+const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const cors = require('cors');
+const mongoose = require('mongoose');
 
-class SocketManager {
-  constructor(io) {
-    this.io = io;
-    this.activeUsers = new Map(); // socketId -> userData
-    this.workspaceUsers = new Map(); // workspaceId -> Set of socketIds
-  }
+// Import routes
+const workspaceRoutes = require('../routes/workspace');
+const voiceRoutes = require('../routes/voice');
+const authRoutes = require('../routes/auth');
+const aiRoutes = require('../routes/ai');
+const noteRoutes = require('../routes/note');
 
-  handleConnection(socket) {
-    console.log(`User connected: ${socket.id}`);
+// Import socket manager
+const SocketManager = require('../socket/socketHandlers');
+
+const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+    cors: {
+        origin: "*",
+        methods: ["GET", "POST", "PUT", "DELETE"]
+    }
+});
+
+// Middleware
+app.use(cors());
+app.use(express.json());
+app.use('/uploads', express.static('uploads'));
+
+// Make io available to routes
+app.use((req, res, next) => {
+    req.io = io;
+    next();
+});
+
+// Routes
+app.use('/api/workspace', workspaceRoutes);
+app.use('/api/voice', voiceRoutes);
+app.use('/api/auth', authRoutes);
+app.use('/api/ai', aiRoutes);
+app.use('/api/note', noteRoutes);
+
+app.get('/', (req, res) => {
+    res.send('3D Collaborative Workspace Server is Running');
+});
+
+// MongoDB connection
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log('Connected to MongoDB Atlas'))
+  .catch((err) => console.error('MongoDB connection error:', err));
+
+// Socket.IO connection handling
+io.on('connection', (socket) => {
+    console.log(`User Connected: ${socket.id}`);
     
-    // User joins workspace
-    socket.on('joinWorkspace', async (data) => {
-      try {
-        const { workspaceId, userId, userInfo } = data;
-        
-        // Leave previous workspace if any
-        if (socket.currentWorkspace) {
-          await this.leaveWorkspace(socket, socket.currentWorkspace);
-        }
-        
-        // Join new workspace
-        socket.join(workspaceId);
-        socket.currentWorkspace = workspaceId;
-        socket.userId = userId;
-        
-        // Track user
-        this.activeUsers.set(socket.id, {
-          userId,
-          workspaceId,
-          userInfo,
-          position: { x: 0, y: 0.2, z: 0 },
-          avatar: {
-            color: this.randomColor(),
-            model: 'default'
-          },
-          isVoiceActive: false,
-          joinedAt: new Date()
-        });
-        
-        // Track workspace users
-        if (!this.workspaceUsers.has(workspaceId)) {
-          this.workspaceUsers.set(workspaceId, new Set());
-        }
-        this.workspaceUsers.get(workspaceId).add(socket.id);
-        
-        // Update session
-        await this.updateSession(workspaceId, userId, 'joined', socket.id);
-        
-        // Send existing users to new user
-        const workspaceSocketIds = this.workspaceUsers.get(workspaceId);
-        const existingUsers = {};
-        
-        workspaceSocketIds.forEach(socketId => {
-          if (socketId !== socket.id && this.activeUsers.has(socketId)) {
-            const userData = this.activeUsers.get(socketId);
-            existingUsers[socketId] = userData;
-          }
-        });
-        
-        socket.emit('existingUsers', existingUsers);
-        
-        // Notify others about new user
-        socket.to(workspaceId).emit('userJoined', {
-          socketId: socket.id,
-          userId,
-          userInfo,
-          position: this.activeUsers.get(socket.id).position,
-          avatar: this.activeUsers.get(socket.id).avatar
-        });
-        
-        console.log(`User ${userId} joined workspace ${workspaceId}`);
-      } catch (error) {
-        console.error('Join workspace error:', error);
-        socket.emit('error', { message: 'Failed to join workspace' });
-      }
-    });
+    // Use the socket manager for all events
+    socketManager.handleConnection(socket);
     
-    // User position updates
-    socket.on('updatePosition', (position) => {
-      if (this.activeUsers.has(socket.id)) {
-        const userData = this.activeUsers.get(socket.id);
-        userData.position = position;
-        
-        socket.to(userData.workspaceId).emit('userMoved', {
-          socketId: socket.id,
-          position
-        });
-      }
-    });
-    
-    // Real-time sticky note events
+    // Additional debugging and fallback events
     socket.on('createNote', async (data) => {
-      try {
-        const { text, position, workspaceId } = data;
-        const userData = this.activeUsers.get(socket.id);
+        console.log(`Direct createNote from ${socket.id}:`, data);
         
-        if (!userData || userData.workspaceId !== workspaceId) {
-          return socket.emit('error', { message: 'Invalid workspace' });
-        }
-        
-        const noteId = `note_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        
-        const note = new Note({
-          id: noteId,
-          text,
-          position,
-          workspaceId,
-          createdBy: userData.userId
-        });
-        
-        await note.save();
-        await note.populate('createdBy', 'username email');
-        
-        // Broadcast to workspace
-        this.io.to(workspaceId).emit('noteCreated', {
-          note: note.toObject(),
-          createdBy: note.createdBy
-        });
-        
-        console.log(`Note created in workspace ${workspaceId} by ${userData.userId}`);
-      } catch (error) {
-        console.error('Create note error:', error);
-        socket.emit('error', { message: 'Failed to create note' });
-      }
-    });
-    
-    socket.on('updateNote', async (data) => {
-      try {
-        const { noteId, updates } = data;
-        const userData = this.activeUsers.get(socket.id);
-        
-        const note = await Note.findOne({ id: noteId });
-        if (!note) {
-          return socket.emit('error', { message: 'Note not found' });
-        }
-        
-        // Check if note is locked
-        if (note.isLocked && note.lockedBy.toString() !== userData.userId) {
-          return socket.emit('error', { message: 'Note is locked by another user' });
-        }
-        
-        // Update note
-        Object.assign(note, updates);
-        note.lastModifiedBy = userData.userId;
-        note.version += 1;
-        
-        await note.save();
-        await note.populate('lastModifiedBy', 'username email');
-        
-        // Broadcast update
-        socket.to(note.workspaceId.toString()).emit('noteUpdated', {
-          note: note.toObject(),
-          updatedBy: note.lastModifiedBy
-        });
-        
-      } catch (error) {
-        console.error('Update note error:', error);
-        socket.emit('error', { message: 'Failed to update note' });
-      }
-    });
-    
-    socket.on('deleteNote', async (data) => {
-      try {
-        const { noteId } = data;
-        const userData = this.activeUsers.get(socket.id);
-        
-        const note = await Note.findOne({ id: noteId });
-        if (!note) {
-          return socket.emit('error', { message: 'Note not found' });
-        }
-        
-        // Check permissions
-        if (note.createdBy.toString() !== userData.userId) {
-          const workspace = await Workspace.findById(note.workspaceId);
-          const isOwner = workspace.createdBy.toString() === userData.userId;
-          const isAdmin = workspace.participants.some(p => 
-            p.userId.toString() === userData.userId && p.role === 'admin'
-          );
-          
-          if (!isOwner && !isAdmin) {
-            return socket.emit('error', { message: 'Permission denied' });
-          }
-        }
-        
-        await Note.deleteOne({ id: noteId });
-        
-        // Broadcast deletion
-        this.io.to(note.workspaceId.toString()).emit('noteDeleted', {
-          noteId,
-          deletedBy: userData.userId
-        });
-        
-      } catch (error) {
-        console.error('Delete note error:', error);
-        socket.emit('error', { message: 'Failed to delete note' });
-      }
-    });
-    
-    // Drawing events
-    socket.on('startStroke', async (data) => {
-      try {
-        const { workspaceId, strokeData } = data;
-        const userData = this.activeUsers.get(socket.id);
-        
-        if (userData.workspaceId !== workspaceId) {
-          return socket.emit('error', { message: 'Invalid workspace' });
-        }
-        
-        // Broadcast stroke start to others
-        socket.to(workspaceId).emit('strokeStarted', {
-          socketId: socket.id,
-          strokeData,
-          userId: userData.userId
-        });
-        
-      } catch (error) {
-        console.error('Start stroke error:', error);
-      }
-    });
-    
-    socket.on('continueStroke', (data) => {
-      const { workspaceId, point } = data;
-      socket.to(workspaceId).emit('strokeContinued', {
-        socketId: socket.id,
-        point
-      });
-    });
-    
-    socket.on('endStroke', async (data) => {
-      try {
-        const { workspaceId, strokeData } = data;
-        const userData = this.activeUsers.get(socket.id);
-        
-        // Save stroke to database
-        const stroke = new DrawingStroke({
-          id: strokeData.id,
-          points: strokeData.points,
-          color: strokeData.color,
-          width: strokeData.width,
-          tool: strokeData.tool || 'pen',
-          workspaceId,
-          createdBy: userData.userId
-        });
-        
-        await stroke.save();
-        
-        // Broadcast final stroke
-        socket.to(workspaceId).emit('strokeCompleted', {
-          strokeData,
-          createdBy: userData.userId
-        });
-        
-      } catch (error) {
-        console.error('End stroke error:', error);
-      }
-    });
-    
-    // Voice chat events
-    socket.on('toggleVoice', (data) => {
-      const { isActive } = data;
-      const userData = this.activeUsers.get(socket.id);
-      
-      if (userData) {
-        userData.isVoiceActive = isActive;
-        
-        socket.to(userData.workspaceId).emit('userVoiceChanged', {
-          socketId: socket.id,
-          userId: userData.userId,
-          isVoiceActive: isActive
-        });
-      }
-    });
-    
-    // WebRTC signaling
-    socket.on('rtc-offer', (data) => {
-      socket.to(data.to).emit('rtc-offer', {
-        from: socket.id,
-        offer: data.offer
-      });
-    });
-    
-    socket.on('rtc-answer', (data) => {
-      socket.to(data.to).emit('rtc-answer', {
-        from: socket.id,
-        answer: data.answer
-      });
-    });
-    
-    socket.on('rtc-ice-candidate', (data) => {
-      socket.to(data.to).emit('rtc-ice-candidate', {
-        from: socket.id,
-        candidate: data.candidate
-      });
-    });
-    
-    // Cursor sharing
-    socket.on('cursorMove', (data) => {
-      const userData = this.activeUsers.get(socket.id);
-      if (userData) {
-        socket.to(userData.workspaceId).emit('userCursor', {
-          socketId: socket.id,
-          userId: userData.userId,
-          position: data.position
-        });
-      }
-    });
-    
-    // Disconnect handling
-    socket.on('disconnect', async () => {
-      console.log(`User disconnected: ${socket.id}`);
-      
-      if (this.activeUsers.has(socket.id)) {
-        const userData = this.activeUsers.get(socket.id);
-        
-        // Update session
-        await this.updateSession(userData.workspaceId, userData.userId, 'left', socket.id);
-        
-        // Remove from tracking
-        this.activeUsers.delete(socket.id);
-        
-        if (this.workspaceUsers.has(userData.workspaceId)) {
-          this.workspaceUsers.get(userData.workspaceId).delete(socket.id);
-          
-          // Clean up empty workspace tracking
-          if (this.workspaceUsers.get(userData.workspaceId).size === 0) {
-            this.workspaceUsers.delete(userData.workspaceId);
-          }
-        }
-        
-        // Notify others
-        socket.to(userData.workspaceId).emit('userLeft', {
-          socketId: socket.id,
-          userId: userData.userId
-        });
-      }
-    });
-  }
-  
-  async leaveWorkspace(socket, workspaceId) {
-    socket.leave(workspaceId);
-    
-    if (this.activeUsers.has(socket.id)) {
-      const userData = this.activeUsers.get(socket.id);
-      await this.updateSession(workspaceId, userData.userId, 'left', socket.id);
-    }
-  }
-  
-  async updateSession(workspaceId, userId, action, socketId) {
-    try {
-      let session = await Session.findOne({ 
-        workspaceId, 
-        isActive: true 
-      });
-      
-      if (!session && action === 'joined') {
-        session = new Session({
-          sessionId: `session_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
-          workspaceId,
-          participants: []
-        });
-      }
-      
-      if (session) {
-        let participant = session.participants.find(p => 
-          p.userId.toString() === userId
-        );
-        
-        if (action === 'joined') {
-          if (!participant) {
-            session.participants.push({
-              userId,
-              socketId,
-              joinedAt: new Date(),
-              position: { x: 0, y: 0.2, z: 0 },
-              isVoiceActive: false,
-              avatar: {
-                color: this.randomColor(),
-                model: 'default'
-              }
+        try {
+            // Simple in-memory note creation for immediate feedback
+            const noteId = `note_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+            const noteData = {
+                id: noteId,
+                text: data.text || "New Note",
+                position: data.position,
+                workspaceId: data.workspaceId,
+                createdBy: socket.userId || 'anonymous'
+            };
+            
+            // Broadcast to all users in the workspace
+            io.to(data.workspaceId).emit('noteCreated', {
+                note: noteData,
+                createdBy: { username: 'User' }
             });
-          }
-        } else if (action === 'left' && participant) {
-          participant.leftAt = new Date();
+            
+            console.log(`Note created and broadcasted: ${noteId}`);
+        } catch (error) {
+            console.error('Error creating note:', error);
+            socket.emit('error', { message: 'Failed to create note' });
         }
+    });
+    
+    socket.on('joinWorkspace', (data) => {
+        console.log(`User ${socket.id} joining workspace: ${data.workspaceId}`);
+        socket.join(data.workspaceId);
+        socket.workspaceId = data.workspaceId;
+        socket.userId = data.userId;
         
-        // Check if session should end
-        const activeParticipants = session.participants.filter(p => !p.leftAt);
-        if (activeParticipants.length === 0) {
-          session.isActive = false;
-          session.endedAt = new Date();
-          session.duration = Math.round((new Date() - session.startedAt) / 60000);
+        // Notify others in the workspace
+        socket.to(data.workspaceId).emit('userJoined', {
+            socketId: socket.id,
+            userId: data.userId,
+            userInfo: data.userInfo,
+            position: { x: 0, y: 0.2, z: 0 },
+            avatar: { color: '#' + Math.floor(Math.random()*16777215).toString(16) }
+        });
+        
+        // Send existing users to the new user
+        socket.emit('existingUsers', {});
+    });
+    
+    socket.on('updatePosition', (position) => {
+        if (socket.workspaceId) {
+            socket.to(socket.workspaceId).emit('userMoved', {
+                socketId: socket.id,
+                position: position
+            });
         }
-        
-        await session.save();
-      }
-    } catch (error) {
-      console.error('Update session error:', error);
-    }
-  }
-  
-  randomColor() {
-    const colors = ['#ff6b6b', '#4ecdc4', '#45b7d1', '#96ceb4', '#feca57', '#ff9ff3', '#54a0ff', '#5f27cd'];
-    return colors[Math.floor(Math.random() * colors.length)];
-  }
-}
+    });
+    
+    socket.on('updateNote', (data) => {
+        console.log(`Update note from ${socket.id}:`, data);
+        if (socket.workspaceId) {
+            socket.to(socket.workspaceId).emit('noteUpdated', {
+                note: {
+                    id: data.noteId,
+                    ...data.updates
+                }
+            });
+        }
+    });
+    
+    socket.on('deleteNote', (data) => {
+        console.log(`Delete note from ${socket.id}:`, data);
+        if (socket.workspaceId) {
+            socket.to(socket.workspaceId).emit('noteDeleted', {
+                noteId: data.noteId
+            });
+        }
+    });
+    
+    socket.on('disconnect', () => {
+        console.log(`User disconnected: ${socket.id}`);
+        if (socket.workspaceId) {
+            socket.to(socket.workspaceId).emit('userLeft', {
+                socketId: socket.id
+            });
+        }
+    });
+    
+    // Fallback events for backward compatibility
+    socket.on('newSticky', (data) => {
+        console.log(`Received newSticky from ${socket.id}:`, data);
+        socket.broadcast.emit('addSticky', data);
+    });
 
-module.exports = SocketManager;
+    socket.on('moveSticky', (data) => {
+        console.log(`Received moveSticky from ${socket.id}:`, data);
+        socket.broadcast.emit('stickyMoved', data);
+    });
+
+    socket.on('updateStickyText', (data) => {
+        console.log(`Received updateStickyText from ${socket.id}:`, data);
+        socket.broadcast.emit('stickyTextUpdated', data);
+    });
+
+    socket.on('deleteSticky', (data) => {
+        console.log(`Received deleteSticky from ${socket.id}:`, data);
+        socket.broadcast.emit('stickyDeleted', data);
+    });
+});
+
+// Error handling middleware
+app.use((req, res) => {
+    res.status(404).json({ success: false, message: 'Route not found' });
+});
+
+app.use((err, req, res, next) => {
+    console.error('Server error:', err);
+    res.status(500).json({ success: false, message: 'Internal server error' });
+});
+
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => {
+    console.log(`3D Collaborative Workspace Server running on port ${PORT}`);
+    console.log(`Frontend should connect to: http://localhost:${PORT}`);
+});

@@ -1,0 +1,927 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Collaborative Workspace</title>
+    <style>
+        body { 
+            margin: 0; 
+            overflow: hidden; 
+            background: #000;
+            font-family: Arial, sans-serif;
+        }
+        canvas { 
+            display: block; 
+        }
+        
+        .ui-panel {
+            position: fixed;
+            background: rgba(0, 0, 0, 0.8);
+            backdrop-filter: blur(10px);
+            color: white;
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 14px;
+            z-index: 100;
+        }
+        
+        .top-left {
+            top: 20px;
+            left: 20px;
+        }
+        
+        .top-right {
+            top: 20px;
+            right: 20px;
+        }
+        
+        .btn {
+            padding: 8px 12px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 12px;
+            margin: 5px;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary {
+            background: #4ecdc4;
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            background: #44a08d;
+        }
+        
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+        
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+        
+        .user-info {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .avatar {
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            background: linear-gradient(45deg, #4ecdc4, #44a08d);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+        
+        .online-users {
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        
+        .online-user {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        
+        .user-avatar {
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 10px;
+            font-weight: bold;
+        }
+        
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+            color: white;
+            font-size: 18px;
+        }
+        
+        .loading-spinner {
+            width: 32px;
+            height: 32px;
+            border: 3px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top-color: #4ecdc4;
+            animation: spin 1s ease-in-out infinite;
+            margin-right: 15px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .workspace-id {
+            font-family: monospace;
+            font-size: 11px;
+            word-break: break-all;
+            color: #4ecdc4;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading" class="loading-overlay">
+        <div class="loading-spinner"></div>
+        Connecting to workspace...
+    </div>
+
+    <div class="ui-panel top-left">
+        <h3>🌐 3D Workspace</h3>
+        <div>🖱️ Click: Create sticky note</div>
+        <div>⌨️ Arrow keys: Move avatar</div>
+        
+        <div>
+            <button id="saveBtn" class="btn btn-primary">💾 Save</button>
+            <button id="shareBtn" class="btn btn-secondary">🔗 Share</button>
+            <button id="backBtn" class="btn btn-secondary">⬅️ Back</button>
+        </div>
+        
+        <div style="margin-top: 10px; padding: 8px; background: rgba(255,255,255,0.1); border-radius: 6px;">
+            <div style="font-size: 11px; color: rgba(255,255,255,0.7);">Workspace ID:</div>
+            <div class="workspace-id" id="currentWorkspaceId">Loading...</div>
+            <button id="copyIdBtn" class="btn btn-secondary" style="font-size: 10px; padding: 4px 8px; margin-top: 5px;">📋 Copy</button>
+        </div>
+        
+        <div class="online-users">
+            <h4 style="margin: 0 0 10px 0; color: #4ecdc4;">Online Users</h4>
+            <div id="usersList">Loading...</div>
+        </div>
+    </div>
+
+    <div class="ui-panel top-right">
+        <div class="user-info">
+            <div class="avatar" id="userAvatar">U</div>
+            <div>
+                <div id="userName">Loading...</div>
+                <div style="font-size: 12px; opacity: 0.7;" id="userEmail"></div>
+            </div>
+        </div>
+        <div>
+            <button id="logoutBtn" class="btn btn-primary">🚪 Logout</button>
+        </div>
+    </div>
+    
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://unpkg.com/three@0.149.0/build/three.min.js"></script>
+    <script>
+        // Auth check and initialization
+        const API_BASE = 'http://localhost:3000/api';
+        let authToken = localStorage.getItem('authToken');
+        let currentUser = JSON.parse(localStorage.getItem('user') || '{}');
+        let currentWorkspaceId = localStorage.getItem('currentWorkspaceId');
+        
+        // Check authentication
+        if (!authToken) {
+            window.location.href = 'index.html';
+        }
+        
+        // If no workspace selected, redirect to workspace selector
+        if (!currentWorkspaceId) {
+            window.location.href = 'workspace-selector.html';
+        }
+        
+        // Initialize user info safely
+        const userNameEl = document.getElementById('userName');
+        const userEmailEl = document.getElementById('userEmail');
+        const userAvatarEl = document.getElementById('userAvatar');
+        const currentWorkspaceIdEl = document.getElementById('currentWorkspaceId');
+        
+        if (userNameEl) userNameEl.textContent = currentUser.username || 'User';
+        if (userEmailEl) userEmailEl.textContent = currentUser.email || '';
+        if (userAvatarEl) userAvatarEl.textContent = (currentUser.username || 'U')[0].toUpperCase();
+        if (currentWorkspaceIdEl) currentWorkspaceIdEl.textContent = currentWorkspaceId || 'Loading...';
+        
+        // Socket connection
+        const socket = io('http://localhost:3000', { 
+            transports: ['websocket'],
+            auth: {
+                token: authToken,
+                user: currentUser
+            }
+        });
+        
+        // Global variables
+        const otherUsers = {};
+        const onlineUsers = {};
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2();
+        
+        // 3D Scene setup
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setClearColor(0x87CEEB); // Sky blue background instead of black
+        document.body.appendChild(renderer.domElement);
+        
+        // Environment setup
+        const gridHelper = new THREE.GridHelper(50, 50, 0x444444, 0x888888);
+        scene.add(gridHelper);
+        
+        const planeGem = new THREE.PlaneGeometry(50, 50);
+        const planeMaterial = new THREE.MeshStandardMaterial({ 
+            color: 0xaaaaaa, 
+            side: THREE.DoubleSide,
+            transparent: true,
+            opacity: 0.8
+        });
+        const plane = new THREE.Mesh(planeGem, planeMaterial);
+        plane.rotation.x = -Math.PI / 2;
+        scene.add(plane);
+        
+        // User avatar
+        const avatarGeo = new THREE.SphereGeometry(0.2, 32, 32);
+        const avatarMaterial = new THREE.MeshStandardMaterial({ color: 0x0000ff });
+        const avatar = new THREE.Mesh(avatarGeo, avatarMaterial);
+        scene.add(avatar);
+        avatar.position.y = 0.2;
+        
+        // Movement controls
+        let moveX = 0, moveZ = 0;
+        
+        // Lighting - Enhanced for better visibility
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+        directionalLight.position.set(5, 10, 7.5);
+        directionalLight.castShadow = true;
+        scene.add(directionalLight);
+        
+        const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+        scene.add(ambientLight);
+        
+        // Add some extra lights for better visibility
+        const pointLight1 = new THREE.PointLight(0xffffff, 0.5);
+        pointLight1.position.set(10, 10, 10);
+        scene.add(pointLight1);
+        
+        const pointLight2 = new THREE.PointLight(0xffffff, 0.5);
+        pointLight2.position.set(-10, 10, -10);
+        scene.add(pointLight2);
+        
+        camera.position.set(3, 3, 5);
+        camera.lookAt(0, 0, 0);
+        
+        const stickyNotes = {};
+        
+        // Socket event handlers
+        socket.on('connect', () => {
+            console.log('✅ Connected to server');
+            const loadingEl = document.getElementById('loading');
+            if (loadingEl) loadingEl.style.display = 'none';
+            
+            console.log('🏠 Joining workspace:', currentWorkspaceId);
+            socket.emit('joinWorkspace', {
+                workspaceId: currentWorkspaceId,
+                userId: currentUser._id,
+                userInfo: currentUser
+            });
+        });
+        
+        socket.on('joinedWorkspace', (data) => {
+            console.log('✅ Successfully joined workspace:', data);
+        });
+        
+        socket.on('disconnect', () => {
+            console.log('❌ Disconnected from server');
+            const loadingEl = document.getElementById('loading');
+            if (loadingEl) {
+                loadingEl.style.display = 'flex';
+                loadingEl.innerHTML = '<div class="loading-spinner"></div>Reconnecting...';
+            }
+        });
+        
+        socket.on('existingUsers', (users) => {
+            console.log('👥 Received existing users:', users);
+            console.log('👥 Number of existing users:', Object.keys(users).length);
+            
+            Object.entries(users).forEach(([id, userData]) => {
+                console.log(`👤 Processing existing user: ${userData.userInfo?.username} (${id})`);
+                if (id !== socket.id) {
+                    createOtherUser(id, userData);
+                    addToOnlineUsers(id, userData);
+                }
+            });
+        });
+        
+        socket.on('userJoined', (data) => {
+            console.log('👋 User joined:', data);
+            console.log(`👋 Creating new user: ${data.userInfo?.username} (${data.socketId})`);
+            
+            // Don't create ourselves
+            if (data.socketId === socket.id) {
+                console.log('⚠️ Ignoring self join event');
+                return;
+            }
+            
+            createOtherUser(data.socketId, data);
+            addToOnlineUsers(data.socketId, data);
+        });
+        
+        socket.on('allUsers', (users) => {
+            console.log('👥 Received ALL users update:', users);
+            
+            // Clear existing users first
+            Object.keys(otherUsers).forEach(id => {
+                if (!users[id]) {
+                    console.log(`🧹 Removing user that left: ${id}`);
+                    if (otherUsers[id]) {
+                        scene.remove(otherUsers[id]);
+                        delete otherUsers[id];
+                    }
+                    delete onlineUsers[id];
+                }
+            });
+            
+            // Add/update all users
+            Object.entries(users).forEach(([id, userData]) => {
+                if (id !== socket.id && !otherUsers[id]) {
+                    console.log(`👤 Adding missing user: ${userData.userInfo?.username} (${id})`);
+                    createOtherUser(id, userData);
+                    addToOnlineUsers(id, userData);
+                }
+            });
+            
+            updateOnlineUsersList();
+        });
+        
+        socket.on('userMoved', ({ socketId, position }) => {
+            const user = otherUsers[socketId];
+            if (user) {
+                user.position.set(position.x, position.y, position.z);
+            }
+        });
+        
+        socket.on('userLeft', ({ socketId }) => {
+            console.log('👋 User left:', socketId);
+            if (otherUsers[socketId]) {
+                scene.remove(otherUsers[socketId]);
+                delete otherUsers[socketId];
+                removeFromOnlineUsers(socketId);
+                console.log(`👋 Removed user: ${socketId}`);
+            }
+        });
+        
+        socket.on('workspaceData', (data) => {
+            console.log('📊 Received workspace data:', data);
+            loadWorkspaceData(data);
+        });
+        
+        socket.on('noteCreated', ({ note }) => {
+            console.log('📝 Note created:', note);
+            const pos = new THREE.Vector3(note.position.x, note.position.y, note.position.z);
+            createStickyNote(pos, note.text, note.id);
+        });
+        
+        socket.on('noteUpdated', ({ note }) => {
+            console.log('✏️ Note updated:', note);
+            const stickyNote = stickyNotes[note.id];
+            if (stickyNote) {
+                if (note.text) stickyNote.setText(note.text);
+                if (note.position) {
+                    const pos = new THREE.Vector3(note.position.x, note.position.y, note.position.z);
+                    stickyNote.setPosition(pos);
+                }
+            }
+        });
+        
+        socket.on('noteDeleted', ({ noteId }) => {
+            console.log('🗑️ Note deleted:', noteId);
+            const stickyNote = stickyNotes[noteId];
+            if (stickyNote) {
+                stickyNote.destroy();
+            }
+        });
+        
+        function loadWorkspaceData(data) {
+            // Clear existing notes
+            Object.values(stickyNotes).forEach(note => note.destroy());
+            
+            // Load notes from workspace data
+            if (data.notes && data.notes.length > 0) {
+                console.log(`📚 Loading ${data.notes.length} existing notes`);
+                data.notes.forEach(note => {
+                    const pos = new THREE.Vector3(note.position.x, note.position.y, note.position.z);
+                    createStickyNote(pos, note.text, note.id);
+                });
+            }
+            
+            console.log('✅ Workspace data loaded');
+        }
+        
+        // Helper functions
+        function createOtherUser(id, userData) {
+            console.log(`🎨 Creating 3D avatar for user: ${userData.userInfo?.username} (${id})`);
+            console.log('👤 User data:', userData);
+            
+            // Don't create if already exists
+            if (otherUsers[id]) {
+                console.log(`⚠️ User ${id} already exists, skipping`);
+                return;
+            }
+            
+            const geometry = new THREE.SphereGeometry(0.2, 32, 32);
+            const color = userData.avatar?.color || '#ff0000';
+            const material = new THREE.MeshStandardMaterial({ 
+                color: color
+            });
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.set(
+                userData.position?.x || 0,
+                userData.position?.y || 0.2,
+                userData.position?.z || 0
+            );
+            scene.add(mesh);
+            
+            // Add username label
+            const canvas = document.createElement('canvas');
+            canvas.width = 256;
+            canvas.height = 64;
+            const ctx = canvas.getContext('2d');
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.8)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.fillStyle = 'white';
+            ctx.font = 'bold 20px Arial';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(userData.userInfo?.username || 'User', 128, 32);
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            const spriteMaterial = new THREE.SpriteMaterial({ map: texture, transparent: true });
+            const sprite = new THREE.Sprite(spriteMaterial);
+            sprite.scale.set(2, 0.5, 1);
+            sprite.position.set(0, 0.8, 0);
+            
+            mesh.add(sprite);
+            otherUsers[id] = mesh;
+            
+            console.log(`✅ Created 3D avatar for: ${userData.userInfo?.username}`);
+        }
+        
+        function addToOnlineUsers(socketId, userData) {
+            console.log(`📝 Adding to online users list: ${userData.userInfo?.username} (${socketId})`);
+            onlineUsers[socketId] = userData;
+            updateOnlineUsersList();
+        }
+        
+        function removeFromOnlineUsers(socketId) {
+            console.log(`📝 Removing from online users list: ${socketId}`);
+            delete onlineUsers[socketId];
+            updateOnlineUsersList();
+        }
+        
+        function updateOnlineUsersList() {
+            const usersList = document.getElementById('usersList');
+            if (!usersList) return;
+            
+            console.log(`📋 Updating online users list. Count: ${Object.keys(onlineUsers).length}`);
+            
+            if (Object.keys(onlineUsers).length === 0) {
+                usersList.innerHTML = '<div style="color: #666; font-size: 12px;">No other users online</div>';
+                return;
+            }
+            
+            usersList.innerHTML = '';
+            
+            Object.entries(onlineUsers).forEach(([id, user]) => {
+                const userDiv = document.createElement('div');
+                userDiv.className = 'online-user';
+                
+                const avatarDiv = document.createElement('div');
+                avatarDiv.className = 'user-avatar';
+                avatarDiv.style.backgroundColor = user.avatar?.color || '#4ecdc4';
+                avatarDiv.textContent = (user.userInfo?.username || 'U')[0].toUpperCase();
+                
+                const nameDiv = document.createElement('div');
+                nameDiv.textContent = user.userInfo?.username || 'Anonymous';
+                nameDiv.style.fontSize = '12px';
+                
+                const statusDiv = document.createElement('div');
+                statusDiv.style.width = '8px';
+                statusDiv.style.height = '8px';
+                statusDiv.style.borderRadius = '50%';
+                statusDiv.style.backgroundColor = '#27ae60';
+                statusDiv.style.marginLeft = 'auto';
+                
+                userDiv.appendChild(avatarDiv);
+                userDiv.appendChild(nameDiv);
+                userDiv.appendChild(statusDiv);
+                usersList.appendChild(userDiv);
+                
+                console.log(`📋 Added to list: ${user.userInfo?.username}`);
+            });
+        }
+        
+        // StickyNote class
+        class StickyNote {
+            constructor(position, text = "New Note", id = null) {
+                this.id = id || crypto.randomUUID();
+                this.text = text;
+                this.position = position.clone();
+                this.mesh = null;
+                this.canvas = null;
+                this.texture = null;
+                
+                this.createMesh();
+                this.updateVisual();
+                
+                scene.add(this.mesh);
+                stickyNotes[this.id] = this;
+            }
+            
+            createMesh() {
+                this.canvas = document.createElement('canvas');
+                this.canvas.width = 512;
+                this.canvas.height = 320;
+                
+                this.texture = new THREE.CanvasTexture(this.canvas);
+                this.texture.needsUpdate = true;
+                
+                const material = new THREE.MeshBasicMaterial({ 
+                    map: this.texture, 
+                    side: THREE.DoubleSide,
+                    transparent: true
+                });
+                const geometry = new THREE.PlaneGeometry(2, 1.2);
+                this.mesh = new THREE.Mesh(geometry, material);
+                this.mesh.position.copy(this.position);
+                this.mesh.position.y += 0.6;
+                
+                this.mesh.userData.stickyNote = this;
+                this.mesh.userData.id = this.id;
+            }
+            
+            updateVisual() {
+                const ctx = this.canvas.getContext('2d');
+                ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                // Note background
+                ctx.fillStyle = '#ffff88';
+                ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                // Border
+                ctx.strokeStyle = '#e6d55a';
+                ctx.lineWidth = 8;
+                ctx.strokeRect(0, 0, this.canvas.width, this.canvas.height);
+                
+                // Text
+                ctx.fillStyle = '#000';
+                ctx.font = 'bold 36px Arial';
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'top';
+                
+                // Simple text wrapping
+                const words = this.text.split(' ');
+                const maxWidth = this.canvas.width - 40;
+                let line = '';
+                let y = 40;
+                
+                for (let n = 0; n < words.length; n++) {
+                    const testLine = line + words[n] + ' ';
+                    const metrics = ctx.measureText(testLine);
+                    
+                    if (metrics.width > maxWidth && n > 0) {
+                        ctx.fillText(line, 20, y);
+                        line = words[n] + ' ';
+                        y += 45;
+                    } else {
+                        line = testLine;
+                    }
+                }
+                ctx.fillText(line, 20, y);
+                
+                this.texture.needsUpdate = true;
+            }
+            
+            setText(newText) {
+                this.text = newText;
+                this.updateVisual();
+            }
+            
+            setPosition(newPosition) {
+                this.position.copy(newPosition);
+                this.mesh.position.copy(newPosition);
+                this.mesh.position.y += 0.6;
+            }
+            
+            getText() {
+                return this.text;
+            }
+            
+            destroy() {
+                if (this.mesh) {
+                    scene.remove(this.mesh);
+                    this.mesh.geometry.dispose();
+                    this.mesh.material.dispose();
+                    if (this.texture) {
+                        this.texture.dispose();
+                    }
+                }
+                delete stickyNotes[this.id];
+            }
+        }
+        
+        function createStickyNote(position, text = "New Note", id = null) {
+            return new StickyNote(position, text, id);
+        }
+        
+        // Input handlers
+        document.addEventListener('keydown', (e) => {
+            if (e.key == 'ArrowUp') moveZ = -0.05;
+            if (e.key == 'ArrowDown') moveZ = 0.05;
+            if (e.key == "ArrowLeft") moveX = -0.05;
+            if (e.key == 'ArrowRight') moveX = 0.05;
+        });
+        
+        document.addEventListener('keyup', (e) => {
+            if (['ArrowUp', 'ArrowDown'].includes(e.key)) moveZ = 0;
+            if (['ArrowLeft', 'ArrowRight'].includes(e.key)) moveX = 0;
+        });
+        
+        // Mouse interaction
+        let draggingNote = null;
+        let isDragging = false;
+        let dragStartTime = 0;
+        let dragStartPosition = { x: 0, y: 0 };
+        
+        window.addEventListener('mousedown', (e) => {
+            // Check if clicked on UI elements
+            if (e.target.closest('.ui-panel') || e.target.closest('button')) {
+                return;
+            }
+            
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            
+            const meshes = Object.values(stickyNotes).map(note => note.mesh);
+            const intersects = raycaster.intersectObjects(meshes);
+            
+            if (intersects.length > 0) {
+                draggingNote = intersects[0].object;
+                dragStartTime = Date.now();
+                dragStartPosition = { x: e.clientX, y: e.clientY };
+                
+                const stickyNote = draggingNote.userData.stickyNote;
+                console.log(`🎯 Started dragging note: ${stickyNote.id}`);
+                e.preventDefault();
+            }
+        });
+        
+        window.addEventListener('mousemove', (e) => {
+            if (!draggingNote) return;
+            
+            const dragDistance = Math.sqrt(
+                Math.pow(e.clientX - dragStartPosition.x, 2) + 
+                Math.pow(e.clientY - dragStartPosition.y, 2)
+            );
+            
+            if (dragDistance > 5 && !isDragging) {
+                isDragging = true;
+                const stickyNote = draggingNote.userData.stickyNote;
+                console.log(`🚀 Started dragging note: ${stickyNote.id}`);
+            }
+            
+            if (!isDragging) return;
+            
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            
+            const intersects = raycaster.intersectObject(plane);
+            if (intersects.length > 0) {
+                const point = intersects[0].point;
+                const stickyNote = draggingNote.userData.stickyNote;
+                
+                stickyNote.setPosition(point);
+                
+                // Send update to server
+                socket.emit('updateNote', {
+                    noteId: stickyNote.id,
+                    updates: {
+                        position: { x: point.x, y: point.y, z: point.z }
+                    }
+                });
+            }
+        });
+        
+        let dragJustEnded = false;
+        
+        window.addEventListener('mouseup', (e) => {
+            if (draggingNote) {
+                if (isDragging) {
+                    const stickyNote = draggingNote.userData.stickyNote;
+                    console.log(`✅ Finished dragging note: ${stickyNote.id}`);
+                    dragJustEnded = true;
+                }
+                isDragging = false;
+                draggingNote = null;
+            }
+        });
+        
+        window.addEventListener('click', (e) => {
+            if (isDragging || draggingNote || dragJustEnded) {
+                dragJustEnded = false;
+                return;
+            }
+            
+            // Check if clicked on UI elements
+            if (e.target.closest('.ui-panel') || e.target.closest('button')) {
+                return;
+            }
+            
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            
+            const meshes = Object.values(stickyNotes).map(note => note.mesh);
+            const noteIntersects = raycaster.intersectObjects(meshes);
+            
+            if (noteIntersects.length === 0) {
+                const planeIntersects = raycaster.intersectObject(plane);
+                if (planeIntersects.length > 0) {
+                    const point = planeIntersects[0].point;
+                    
+                    console.log('📍 Creating note at:', point);
+                    
+                    socket.emit('createNote', {
+                        text: "New Note",
+                        position: { x: point.x, y: point.y, z: point.z },
+                        workspaceId: currentWorkspaceId
+                    });
+                }
+            }
+        });
+        
+        window.addEventListener('dblclick', (e) => {
+            mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+            mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+            raycaster.setFromCamera(mouse, camera);
+            
+            const meshes = Object.values(stickyNotes).map(note => note.mesh);
+            const intersects = raycaster.intersectObjects(meshes);
+            
+            if (intersects.length > 0) {
+                const stickyNote = intersects[0].object.userData.stickyNote;
+                if (stickyNote) {
+                    const newText = prompt('Edit note:', stickyNote.getText());
+                    if (newText && newText.trim()) {
+                        stickyNote.setText(newText.trim());
+                        
+                        socket.emit('updateNote', {
+                            noteId: stickyNote.id,
+                            updates: { text: newText.trim() }
+                        });
+                    }
+                }
+            }
+        });
+        
+        // Button handlers
+        document.getElementById('logoutBtn')?.addEventListener('click', () => {
+            localStorage.removeItem('authToken');
+            localStorage.removeItem('user');
+            localStorage.removeItem('isDemo');
+            localStorage.removeItem('currentWorkspaceId');
+            window.location.href = 'index.html';
+        });
+        
+        document.getElementById('backBtn')?.addEventListener('click', () => {
+            window.location.href = 'workspace-selector.html';
+        });
+        
+        document.getElementById('shareBtn')?.addEventListener('click', () => {
+            const shareText = `Join my 3D Workspace!\nWorkspace ID: ${currentWorkspaceId}\nOpen: ${window.location.origin}`;
+            
+            if (navigator.share) {
+                navigator.share({
+                    title: '3D Collaborative Workspace',
+                    text: shareText,
+                    url: window.location.origin
+                });
+            } else {
+                navigator.clipboard.writeText(shareText).then(() => {
+                    alert('Workspace sharing info copied to clipboard!');
+                }).catch(() => {
+                    prompt('Share this workspace:', shareText);
+                });
+            }
+        });
+        
+        document.getElementById('copyIdBtn')?.addEventListener('click', () => {
+            navigator.clipboard.writeText(currentWorkspaceId).then(() => {
+                const btn = document.getElementById('copyIdBtn');
+                if (btn) {
+                    const originalText = btn.innerHTML;
+                    btn.innerHTML = '✅ Copied!';
+                    setTimeout(() => {
+                        btn.innerHTML = originalText;
+                    }, 2000);
+                }
+            });
+        });
+        
+        document.getElementById('debugBtn')?.addEventListener('click', () => {
+            console.log('🔍 DEBUG: Requesting server info');
+            socket.emit('debug');
+            
+            console.log('🔍 DEBUG: Local state');
+            console.log('Other users:', Object.keys(otherUsers));
+            console.log('Online users:', Object.keys(onlineUsers));
+            console.log('Sticky notes:', Object.keys(stickyNotes));
+            
+            // Request fresh user list
+            socket.emit('requestUsers', { workspaceId: currentWorkspaceId });
+        });
+        
+        socket.on('debugResponse', (data) => {
+            console.log('🔍 DEBUG: Server response', data);
+            alert(`Debug Info:\nConnected Users: ${data.connectedUsers.length}\nWorkspace Users: ${JSON.stringify(data.workspaceUsers, null, 2)}`);
+        });
+            const notes = Object.values(stickyNotes).map(note => ({
+                id: note.id,
+                text: note.getText(),
+                position: {
+                    x: note.position.x,
+                    y: note.position.y,
+                    z: note.position.z
+                }
+            }));
+            
+            socket.emit('saveWorkspace', {
+                workspaceId: currentWorkspaceId,
+                notes: notes
+            });
+            
+            const btn = document.getElementById('saveBtn');
+            if (btn) {
+                const originalText = btn.innerHTML;
+                btn.innerHTML = '✅ Saved!';
+                setTimeout(() => {
+                    btn.innerHTML = originalText;
+                }, 2000);
+            }
+        
+        
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+            
+            avatar.position.x += moveX;
+            avatar.position.z += moveZ;
+            camera.position.x = avatar.position.x + 3;
+            camera.position.z = avatar.position.z + 5;
+            camera.lookAt(avatar.position);
+            
+            // Make notes face camera
+            Object.values(stickyNotes).forEach(note => {
+                note.mesh.lookAt(camera.position);
+            });
+            
+            // Send position updates
+            socket.emit('updatePosition', {
+                x: avatar.position.x,
+                y: avatar.position.y,
+                z: avatar.position.z
+            });
+            
+            renderer.render(scene, camera);
+        }
+        
+        // Window resize handler
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+        
+        // Start animation
+        animate();
+    </script>
+</body>
+</html>
