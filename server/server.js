@@ -4,11 +4,13 @@ const http = require('http');
 const { Server } = require('socket.io');
 const cors = require('cors');
 const mongoose = require('mongoose');
+const path = require('path');
 
-// Import routes that definitely exist
+// Import routes
 const workspaceRoutes = require('./routes/workspace');
 const voiceRoutes = require('./routes/voice');
 const authRoutes = require('./routes/auth');
+const modelRoutes = require('./routes/models'); // New 3D models route
 
 const app = express();
 const server = http.createServer(app);
@@ -23,6 +25,9 @@ const io = new Server(server, {
 app.use(cors());
 app.use(express.json());
 
+// Serve static files from uploads directory
+app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
+
 // Make io available to routes
 app.use((req, res, next) => {
     req.io = io;
@@ -33,6 +38,7 @@ app.use((req, res, next) => {
 app.use('/api/workspace', workspaceRoutes);
 app.use('/api/voice', voiceRoutes);
 app.use('/api/auth', authRoutes);
+app.use('/api/models', modelRoutes); // Add 3D models route
 
 app.get('/', (req, res) => {
     res.send('3D Collaborative Workspace Server is Running');
@@ -43,9 +49,10 @@ mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log('✅ Connected to MongoDB Atlas'))
   .catch((err) => console.error('❌ MongoDB connection error:', err));
 
-// Simple socket handling - NO SocketManager
+// Enhanced socket handling with 3D models support
 const connectedUsers = new Map();
 const workspaceUsers = new Map();
+const workspaceModels = new Map(); // Track 3D models per workspace
 
 io.on('connection', (socket) => {
     console.log(`🔌 User Connected: ${socket.id}`);
@@ -76,7 +83,20 @@ io.on('connection', (socket) => {
         
         // Send existing users
         const existingUsers = {};
+        workspaceUsers.get(data.workspaceId).forEach(userId => {
+            if (userId !== socket.id && connectedUsers.has(userId)) {
+                existingUsers[userId] = connectedUsers.get(userId);
+            }
+        });
         socket.emit('existingUsers', existingUsers);
+        
+        // Send existing 3D models for this workspace
+        if (workspaceModels.has(data.workspaceId)) {
+            const models = workspaceModels.get(data.workspaceId);
+            models.forEach(model => {
+                socket.emit('modelUploaded', { model });
+            });
+        }
         
         // Notify others
         socket.to(data.workspaceId).emit('userJoined', {
@@ -90,6 +110,7 @@ io.on('connection', (socket) => {
         console.log(`✅ User ${data.userInfo?.username || 'Anonymous'} joined workspace ${data.workspaceId}`);
     });
     
+    // Sticky notes events
     socket.on('createNote', (data) => {
         console.log(`📝 Creating note from ${socket.id}:`, {
             text: data.text,
@@ -119,19 +140,6 @@ io.on('connection', (socket) => {
         console.log(`✅ Note ${noteId} broadcasted to workspace ${data.workspaceId}`);
     });
     
-    socket.on('updatePosition', (position) => {
-        if (socket.currentWorkspace && connectedUsers.has(socket.id)) {
-            // Update user position in tracking
-            const userData = connectedUsers.get(socket.id);
-            userData.position = position;
-            
-            socket.to(socket.currentWorkspace).emit('userMoved', {
-                socketId: socket.id,
-                position: position
-            });
-        }
-    });
-    
     socket.on('updateNote', (data) => {
         if (socket.currentWorkspace) {
             socket.to(socket.currentWorkspace).emit('noteUpdated', {
@@ -148,10 +156,121 @@ io.on('connection', (socket) => {
         }
     });
     
+    // 3D Models events
+    socket.on('modelUploaded', (data) => {
+        console.log(`📦 Model uploaded from ${socket.id}:`, data.model.name);
+        
+        // Track model in workspace
+        if (!workspaceModels.has(data.workspaceId)) {
+            workspaceModels.set(data.workspaceId, new Map());
+        }
+        workspaceModels.get(data.workspaceId).set(data.model.id, data.model);
+        
+        // Broadcast to other users in workspace
+        socket.to(data.workspaceId).emit('modelUploaded', {
+            model: data.model
+        });
+        
+        console.log(`✅ Model ${data.model.name} broadcasted to workspace ${data.workspaceId}`);
+    });
+    
+    socket.on('modelMoved', (data) => {
+        console.log(`📦 Model moved from ${socket.id}:`, {
+            modelId: data.modelId,
+            position: data.position,
+            rotation: data.rotation,
+            scale: data.scale
+        });
+        
+        // Update model in tracking
+        if (workspaceModels.has(data.workspaceId)) {
+            const models = workspaceModels.get(data.workspaceId);
+            if (models.has(data.modelId)) {
+                const model = models.get(data.modelId);
+                if (data.position) model.position = data.position;
+                if (data.rotation) model.rotation = data.rotation;
+                if (data.scale) model.scale = data.scale;
+            }
+        }
+        
+        // Broadcast to other users
+        socket.to(data.workspaceId).emit('modelMoved', {
+            modelId: data.modelId,
+            position: data.position,
+            rotation: data.rotation,
+            scale: data.scale
+        });
+    });
+    
+    socket.on('modelDeleted', (data) => {
+        console.log(`🗑️ Model deleted from ${socket.id}:`, data.modelId);
+        
+        // Remove from tracking
+        if (workspaceModels.has(data.workspaceId)) {
+            workspaceModels.get(data.workspaceId).delete(data.modelId);
+        }
+        
+        // Broadcast to other users
+        socket.to(data.workspaceId).emit('modelDeleted', {
+            modelId: data.modelId
+        });
+    });
+    
+    // User movement
+    socket.on('updatePosition', (position) => {
+        if (socket.currentWorkspace && connectedUsers.has(socket.id)) {
+            // Update user position in tracking
+            const userData = connectedUsers.get(socket.id);
+            userData.position = position;
+            
+            socket.to(socket.currentWorkspace).emit('userMoved', {
+                socketId: socket.id,
+                position: position
+            });
+        }
+    });
+    
+    // Workspace saving
+    socket.on('saveWorkspace', async (data) => {
+        console.log(`💾 Saving workspace ${data.workspaceId} from ${socket.id}`);
+        
+        try {
+            // Here you would save to database
+            // For now, just acknowledge the save
+            socket.emit('workspaceSaved', {
+                success: true,
+                workspaceId: data.workspaceId,
+                timestamp: new Date()
+            });
+            
+            // Notify other users about the save
+            socket.to(data.workspaceId).emit('workspaceSaved', {
+                success: true,
+                workspaceId: data.workspaceId,
+                savedBy: socket.userInfo?.username || 'Anonymous',
+                timestamp: new Date()
+            });
+            
+        } catch (error) {
+            console.error('Error saving workspace:', error);
+            socket.emit('workspaceSaved', {
+                success: false,
+                error: 'Failed to save workspace'
+            });
+        }
+    });
+    
+    // Disconnect handling
     socket.on('disconnect', () => {
         console.log(`🔌 User disconnected: ${socket.id}`);
         
         if (socket.currentWorkspace) {
+            // Remove from workspace users
+            if (workspaceUsers.has(socket.currentWorkspace)) {
+                workspaceUsers.get(socket.currentWorkspace).delete(socket.id);
+            }
+            
+            // Notify others
             socket.to(socket.currentWorkspace).emit('userLeft', {
                 socketId: socket.id
             });
@@ -159,10 +278,40 @@ io.on('connection', (socket) => {
         
         connectedUsers.delete(socket.id);
     });
+    
+    // Debug and utility events
+    socket.on('debug', () => {
+        console.log('🔍 Debug requested by', socket.id);
+        
+        const debugInfo = {
+            connectedUsers: Array.from(connectedUsers.keys()),
+            workspaceUsers: Object.fromEntries(workspaceUsers),
+            workspaceModels: Object.fromEntries(
+                Array.from(workspaceModels.entries()).map(([ws, models]) => [
+                    ws, Array.from(models.keys())
+                ])
+            ),
+            currentWorkspace: socket.currentWorkspace
+        };
+        
+        socket.emit('debugResponse', debugInfo);
+    });
+});
+
+// Error handling middleware
+app.use((req, res) => {
+    res.status(404).json({ success: false, message: 'Route not found' });
+});
+
+app.use((err, req, res, next) => {
+    console.error('Server error:', err);
+    res.status(500).json({ success: false, message: 'Internal server error' });
 });
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, () => {
     console.log(`🚀 3D Collaborative Workspace Server running on port ${PORT}`);
     console.log(`🌐 Open browser: http://localhost:${PORT}`);
+    console.log(`📦 3D Model uploads enabled`);
+    console.log(`📁 Upload directory: ${path.join(__dirname, 'uploads/models')}`);
 });
