@@ -15,6 +15,8 @@
     </div>
 
     <!-- Voice Chat Controls Panel -->
+    <!-- Replace the existing voice controls section in workspace.html -->
+    <!-- Voice Chat Controls Panel -->
     <div class="ui-panel voice-controls">
         <h4 style="margin: 0 0 10px 0; color: #4ecdc4;">🎤 Voice Chat</h4>
 
@@ -23,6 +25,10 @@
                 <span class="status-dot" id="micDot"></span>
                 <span id="micText">Microphone: Off</span>
             </div>
+            <div id="connectionStatus" class="status-indicator" style="margin-top: 5px;">
+                <span class="status-dot" id="connectionDot"></span>
+                <span id="connectionText">Connections: 0</span>
+            </div>
         </div>
 
         <div class="voice-buttons">
@@ -30,9 +36,28 @@
             <button id="toggleSpeakerBtn" class="btn btn-secondary">🔊 Speaker On</button>
         </div>
 
+        <div class="voice-buttons" style="margin-top: 5px;">
+            <button id="spatialAudioBtn" class="btn btn-secondary" style="width: 100%;">🌍 Spatial: On</button>
+        </div>
+
         <div class="volume-control">
-            <label class="control-label">Volume</label>
+            <label class="control-label">Master Volume</label>
             <input type="range" id="volumeSlider" min="0" max="100" value="50" class="volume-slider">
+            <div style="display: flex; justify-content: space-between; font-size: 10px; margin-top: 2px;">
+                <span>0%</span>
+                <span id="volumeDisplay">50%</span>
+                <span>100%</span>
+            </div>
+        </div>
+
+        <!-- Voice Activity Indicators -->
+        <div id="voiceActivity" style="margin-top: 15px;">
+            <label class="control-label">Voice Activity</label>
+            <div id="voiceActivityList" style="max-height: 100px; overflow-y: auto;">
+                <div style="font-size: 11px; color: rgba(255,255,255,0.5); text-align: center; padding: 10px;">
+                    No active voice connections
+                </div>
+            </div>
         </div>
     </div>
 

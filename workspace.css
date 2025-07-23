@@ -273,17 +273,82 @@ canvas {
     font-size: 11px;
 }
 
-/* Voice Controls Styles */
-.voice-controls {
-    top: 20px;
-    right: 340px; /* Position next to user panel */
-    min-width: 200px;
+/* Add these CSS rules to your existing workspace.css */
+
+/* Voice Activity Indicators */
+.voice-activity-user {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 5px 8px;
+    background: rgba(255,255,255,0.1);
+    border-radius: 4px;
+    margin-bottom: 3px;
+    font-size: 11px;
 }
 
-.voice-status {
-    margin-bottom: 15px;
+.voice-activity-user.speaking {
+    background: rgba(39, 174, 96, 0.3);
+    border-left: 3px solid #27ae60;
 }
 
+.voice-user-info {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+
+.voice-user-avatar {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: #4ecdc4;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-size: 8px;
+    font-weight: bold;
+}
+
+.voice-user-name {
+    color: white;
+    max-width: 80px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.voice-user-distance {
+    font-size: 9px;
+    color: rgba(255,255,255,0.6);
+}
+
+.connection-quality {
+    display: flex;
+    gap: 1px;
+}
+
+.connection-bar {
+    width: 3px;
+    height: 8px;
+    background: rgba(255,255,255,0.3);
+    border-radius: 1px;
+}
+
+.connection-bar.active {
+    background: #27ae60;
+}
+
+.connection-bar.medium {
+    background: #f39c12;
+}
+
+.connection-bar.poor {
+    background: #e74c3c;
+}
+
+/* Enhanced status indicators */
 .status-indicator {
     display: flex;
     align-items: center;
@@ -296,42 +361,50 @@ canvas {
     height: 8px;
     border-radius: 50%;
     background-color: #e74c3c;
-    transition: background-color 0.3s ease;
+    transition: all 0.3s ease;
 }
 
 .status-dot.active {
     background-color: #27ae60;
 }
 
-.voice-buttons {
-    display: flex;
-    gap: 5px;
-    margin-bottom: 15px;
+.status-dot.connecting {
+    background-color: #f39c12;
+    animation: pulse 1s infinite;
 }
 
-.voice-buttons button {
-    flex: 1;
-    font-size: 11px;
-    padding: 8px 4px;
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
 }
 
-.volume-control {
-    margin-top: 10px;
+/* Voice controls positioning adjustment */
+.voice-controls {
+    top: 20px;
+    right: 340px;
+    min-width: 220px;
+    max-width: 280px;
 }
 
-.volume-slider {
-    width: 100%;
-    height: 4px;
-    background: rgba(255,255,255,0.2);
-    border-radius: 2px;
-    outline: none;
+/* Online users with voice indicators */
+.online-user.voice-active {
+    border-left: 3px solid #27ae60;
 }
 
-.volume-slider::-webkit-slider-thumb {
-    appearance: none;
-    width: 16px;
-    height: 16px;
-    border-radius: 50%;
-    background: #4ecdc4;
-    cursor: pointer;
+.online-user.voice-active .user-avatar::after {
+    content: '🎤';
+    position: absolute;
+    top: -2px;
+    right: -2px;
+    font-size: 8px;
+}
+
+.user-avatar {
+    position: relative;
+}
+
+/* Volume display enhancement */
+#volumeDisplay {
+    color: #4ecdc4;
+    font-weight: bold;
 }

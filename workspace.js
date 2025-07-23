@@ -36,7 +36,7 @@ if (userAvatarEl) userAvatarEl.textContent = (currentUser.username || 'U')[0].to
 if (currentWorkspaceIdEl) currentWorkspaceIdEl.textContent = currentWorkspaceId || 'Loading...';
 
 // Socket connection
-const socket = io('http://localhost:3000', { 
+const socket = io('http://localhost:3000', {
     transports: ['websocket'],
     auth: {
         token: authToken,
@@ -48,33 +48,46 @@ const socket = io('http://localhost:3000', {
 
 // Voice Chat System
 class VoiceChat {
+    // Add these properties to your existing constructor
     constructor() {
         this.localStream = null;
-        this.peerConnections = new Map();
+        this.peerConnections = new Map(); // ADD THIS
+        this.remoteStreams = new Map(); // ADD THIS
+        this.audioElements = new Map(); // ADD THIS
         this.isMuted = true;
         this.isSpeakerOn = true;
         this.volume = 0.5;
-        
+        this.spatialAudioEnabled = true; // ADD THIS
+
+        // ADD WebRTC configuration
+        this.rtcConfig = {
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+        };
+
         this.setupUI();
+        this.setupSocketEvents();
     }
-    
+
     setupUI() {
         // Mic toggle button
         document.getElementById('toggleMicBtn')?.addEventListener('click', () => {
             this.toggleMicrophone();
         });
-        
+
         // Speaker toggle button
         document.getElementById('toggleSpeakerBtn')?.addEventListener('click', () => {
             this.toggleSpeaker();
         });
-        
+
         // Volume slider
         document.getElementById('volumeSlider')?.addEventListener('input', (e) => {
             this.setVolume(e.target.value / 100);
         });
     }
-    
+
     async toggleMicrophone() {
         if (this.isMuted) {
             await this.startMicrophone();
@@ -82,80 +95,100 @@ class VoiceChat {
             this.stopMicrophone();
         }
     }
-    
+
     async startMicrophone() {
         try {
-            this.localStream = await navigator.mediaDevices.getUserMedia({ 
+            this.localStream = await navigator.mediaDevices.getUserMedia({
                 audio: {
                     echoCancellation: true,
                     noiseSuppression: true,
                     autoGainControl: true
-                } 
+                }
             });
-            
+
             this.isMuted = false;
             this.updateMicUI();
-            
+
             console.log('🎤 Microphone started');
-            
-            // Notify other users that we're now broadcasting
-            socket.emit('voiceStreamStarted', {
+
+            // CHANGE: Update the socket event name and emit correctly
+            socket.emit('voice-started', {
                 workspaceId: currentWorkspaceId,
-                userId: currentUser._id
+                socketId: socket.id
             });
-            
+
+            // Create connections to existing users who might have voice active
+            Object.keys(onlineUsers).forEach(socketId => {
+                if (socketId !== socket.id) {
+                    // Small delay to ensure the other user receives our voice-started event
+                    setTimeout(() => {
+                        this.createPeerConnection(socketId, true);
+                    }, 500);
+                }
+            });
+
         } catch (error) {
             console.error('❌ Microphone access denied:', error);
-            alert('Microphone access denied. Please enable microphone permissions.');
+            alert('Microphone access denied. Please enable microphone permissions and refresh.');
         }
     }
-    
+
     stopMicrophone() {
         if (this.localStream) {
             this.localStream.getTracks().forEach(track => track.stop());
             this.localStream = null;
         }
-        
+
+        // Close all peer connections
+        this.peerConnections.forEach((pc, socketId) => {
+            pc.close();
+        });
+        this.peerConnections.clear();
+
+        // Remove all audio elements
+        document.querySelectorAll('audio[id^="audio-"]').forEach(audio => audio.remove());
+
         this.isMuted = true;
         this.updateMicUI();
-        
+        this.updateConnectionCount();
+
         console.log('🎤 Microphone stopped');
-        
-        // Notify other users that we stopped broadcasting
-        socket.emit('voiceStreamStopped', {
+
+        // CHANGE: Update the socket event name
+        socket.emit('voice-stopped', {
             workspaceId: currentWorkspaceId,
-            userId: currentUser._id
+            socketId: socket.id
         });
     }
-    
+
     toggleSpeaker() {
         this.isSpeakerOn = !this.isSpeakerOn;
         this.updateSpeakerUI();
-        
+
         // Mute/unmute all remote audio streams
         document.querySelectorAll('audio').forEach(audio => {
             audio.muted = !this.isSpeakerOn;
         });
-        
+
         console.log('🔊 Speaker:', this.isSpeakerOn ? 'ON' : 'OFF');
     }
-    
+
     setVolume(volume) {
         this.volume = volume;
-        
+
         // Apply volume to all remote audio streams
         document.querySelectorAll('audio').forEach(audio => {
             audio.volume = volume;
         });
-        
+
         console.log('🔊 Volume set to:', Math.round(volume * 100) + '%');
     }
-    
+
     updateMicUI() {
         const micBtn = document.getElementById('toggleMicBtn');
         const micDot = document.getElementById('micDot');
         const micText = document.getElementById('micText');
-        
+
         if (this.isMuted) {
             micBtn.textContent = '🎤 Unmute';
             micBtn.className = 'btn btn-secondary';
@@ -168,10 +201,10 @@ class VoiceChat {
             micText.textContent = 'Microphone: On';
         }
     }
-    
+
     updateSpeakerUI() {
         const speakerBtn = document.getElementById('toggleSpeakerBtn');
-        
+
         if (this.isSpeakerOn) {
             speakerBtn.textContent = '🔊 Speaker On';
             speakerBtn.className = 'btn btn-secondary';
@@ -180,7 +213,32 @@ class VoiceChat {
             speakerBtn.className = 'btn btn-danger';
         }
     }
-    
+
+    setupSocketEvents() {
+        // WebRTC signaling events
+        socket.on('webrtc-offer', async (data) => {
+            await this.handleOffer(data);
+        });
+
+        socket.on('webrtc-answer', async (data) => {
+            await this.handleAnswer(data);
+        });
+
+        socket.on('webrtc-ice-candidate', async (data) => {
+            await this.handleIceCandidate(data);
+        });
+
+        socket.on('user-started-voice', (data) => {
+            console.log('🎤 User started voice:', data.socketId);
+            this.createPeerConnection(data.socketId);
+        });
+
+        socket.on('user-stopped-voice', (data) => {
+            console.log('🎤 User stopped voice:', data.socketId);
+            this.removePeerConnection(data.socketId);
+        });
+    }
+
     // Create audio element for remote user
     createRemoteAudio(userId, stream) {
         // Remove existing audio element if any
@@ -188,7 +246,7 @@ class VoiceChat {
         if (existingAudio) {
             existingAudio.remove();
         }
-        
+
         // Create new audio element
         const audio = document.createElement('audio');
         audio.id = `audio-${userId}`;
@@ -196,14 +254,16 @@ class VoiceChat {
         audio.autoplay = true;
         audio.volume = this.volume;
         audio.muted = !this.isSpeakerOn;
-        
-        // Hide audio element (we don't need to see it)
+
+        // Hide audio element
         audio.style.display = 'none';
         document.body.appendChild(audio);
-        
-        console.log('🔊 Created audio stream for user:', userId);
+
+        this.audioElements.set(userId, audio); // ADD THIS LINE
+
+        console.log('🔊 Created audio element for', userId);
     }
-    
+
     // Remove audio element for user who left
     removeRemoteAudio(userId) {
         const audio = document.getElementById(`audio-${userId}`);
@@ -211,6 +271,316 @@ class VoiceChat {
             audio.remove();
             console.log('🔊 Removed audio stream for user:', userId);
         }
+    }
+
+    // ADD these methods to your existing VoiceChat class in workspace.js
+
+    setupSocketEvents() {
+        // WebRTC signaling events
+        socket.on('webrtc-offer', async (data) => {
+            await this.handleOffer(data);
+        });
+
+        socket.on('webrtc-answer', async (data) => {
+            await this.handleAnswer(data);
+        });
+
+        socket.on('webrtc-ice-candidate', async (data) => {
+            await this.handleIceCandidate(data);
+        });
+
+        socket.on('user-started-voice', (data) => {
+            console.log('🎤 User started voice:', data.socketId);
+            if (this.localStream) {
+                this.createPeerConnection(data.socketId, true); // We initiate
+            }
+        });
+
+        socket.on('user-stopped-voice', (data) => {
+            console.log('🎤 User stopped voice:', data.socketId);
+            this.removePeerConnection(data.socketId);
+            this.updateConnectionCount();
+        });
+    }
+
+    async createPeerConnection(remoteSocketId, isInitiator = false) {
+        if (this.peerConnections.has(remoteSocketId)) {
+            console.log('⚠️ Peer connection already exists for', remoteSocketId);
+            return;
+        }
+
+        console.log('🔗 Creating peer connection with', remoteSocketId, 'as', isInitiator ? 'initiator' : 'receiver');
+
+        const pc = new RTCPeerConnection({
+            iceServers: [
+                { urls: 'stun:stun.l.google.com:19302' },
+                { urls: 'stun:stun1.l.google.com:19302' }
+            ]
+        });
+
+        this.peerConnections.set(remoteSocketId, pc);
+
+        // Add local stream if we have one
+        if (this.localStream) {
+            this.localStream.getTracks().forEach(track => {
+                pc.addTrack(track, this.localStream);
+            });
+        }
+
+        // Handle incoming stream
+        pc.ontrack = (event) => {
+            console.log('📡 Received remote stream from', remoteSocketId);
+            const remoteStream = event.streams[0];
+            this.createRemoteAudio(remoteSocketId, remoteStream);
+            this.updateConnectionCount();
+        };
+
+        // Handle ICE candidates
+        pc.onicecandidate = (event) => {
+            if (event.candidate) {
+                console.log('🧊 Sending ICE candidate to', remoteSocketId);
+                socket.emit('webrtc-ice-candidate', {
+                    to: remoteSocketId,
+                    from: socket.id,
+                    candidate: event.candidate
+                });
+            }
+        };
+
+        // Handle connection state changes
+        pc.onconnectionstatechange = () => {
+            console.log('🔗 Connection state with', remoteSocketId, ':', pc.connectionState);
+            this.updateConnectionCount();
+
+            if (pc.connectionState === 'failed' || pc.connectionState === 'disconnected') {
+                this.removePeerConnection(remoteSocketId);
+            }
+        };
+
+        // If we're the initiator, create and send offer
+        if (isInitiator) {
+            try {
+                const offer = await pc.createOffer({
+                    offerToReceiveAudio: true,
+                    offerToReceiveVideo: false
+                });
+                await pc.setLocalDescription(offer);
+
+                console.log('📤 Sending offer to', remoteSocketId);
+                socket.emit('webrtc-offer', {
+                    to: remoteSocketId,
+                    from: socket.id,
+                    offer: offer
+                });
+            } catch (error) {
+                console.error('❌ Error creating offer:', error);
+            }
+        }
+    }
+
+    async handleOffer(data) {
+        const { from, offer } = data;
+        console.log('📥 Received offer from', from);
+
+        if (!this.localStream) {
+            console.log('⚠️ No local stream, ignoring offer');
+            return;
+        }
+
+        // Create peer connection if it doesn't exist
+        if (!this.peerConnections.has(from)) {
+            await this.createPeerConnection(from, false);
+        }
+
+        const pc = this.peerConnections.get(from);
+
+        try {
+            await pc.setRemoteDescription(new RTCSessionDescription(offer));
+
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+
+            console.log('📤 Sending answer to', from);
+            socket.emit('webrtc-answer', {
+                to: from,
+                from: socket.id,
+                answer: answer
+            });
+        } catch (error) {
+            console.error('❌ Error handling offer:', error);
+        }
+    }
+
+    async handleAnswer(data) {
+        const { from, answer } = data;
+        console.log('📥 Received answer from', from);
+
+        const pc = this.peerConnections.get(from);
+        if (pc) {
+            try {
+                await pc.setRemoteDescription(new RTCSessionDescription(answer));
+                console.log('✅ Set remote description for', from);
+            } catch (error) {
+                console.error('❌ Error handling answer:', error);
+            }
+        }
+    }
+
+    async handleIceCandidate(data) {
+        const { from, candidate } = data;
+        console.log('🧊 Received ICE candidate from', from);
+
+        const pc = this.peerConnections.get(from);
+        if (pc) {
+            try {
+                await pc.addIceCandidate(new RTCIceCandidate(candidate));
+                console.log('✅ Added ICE candidate from', from);
+            } catch (error) {
+                console.error('❌ Error adding ICE candidate:', error);
+            }
+        }
+    }
+
+    removePeerConnection(socketId) {
+        const pc = this.peerConnections.get(socketId);
+        if (pc) {
+            pc.close();
+            this.peerConnections.delete(socketId);
+        }
+
+        this.removeRemoteAudio(socketId);
+        this.updateConnectionCount();
+        console.log('🗑️ Removed peer connection for', socketId);
+    }
+
+    updateConnectionCount() {
+        const connectionText = document.getElementById('connectionText');
+        const connectionDot = document.getElementById('connectionDot');
+
+        const activeConnections = this.peerConnections.size;
+
+        if (connectionText) {
+            connectionText.textContent = `Connections: ${activeConnections}`;
+        }
+
+        if (connectionDot) {
+            connectionDot.classList.toggle('active', activeConnections > 0);
+        }
+
+        console.log('📊 Active connections:', activeConnections);
+    }
+
+    async createPeerConnection(remoteSocketId, isInitiator = false) {
+        if (this.peerConnections.has(remoteSocketId)) return;
+
+        const pc = new RTCPeerConnection(this.rtcConfig);
+        this.peerConnections.set(remoteSocketId, pc);
+
+        console.log('🔗 Creating peer connection with', remoteSocketId);
+
+        // Add local stream
+        if (this.localStream) {
+            this.localStream.getTracks().forEach(track => {
+                pc.addTrack(track, this.localStream);
+            });
+        }
+
+        // Handle incoming stream
+        pc.ontrack = (event) => {
+            const remoteStream = event.streams[0];
+            this.remoteStreams.set(remoteSocketId, remoteStream);
+            this.createRemoteAudio(remoteSocketId, remoteStream);
+        };
+
+        // Handle ICE candidates
+        pc.onicecandidate = (event) => {
+            if (event.candidate) {
+                socket.emit('webrtc-ice-candidate', {
+                    to: remoteSocketId,
+                    from: socket.id,
+                    candidate: event.candidate
+                });
+            }
+        };
+
+        // If initiator, create offer
+        if (isInitiator) {
+            try {
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+
+                socket.emit('webrtc-offer', {
+                    to: remoteSocketId,
+                    from: socket.id,
+                    offer: offer
+                });
+            } catch (error) {
+                console.error('❌ Error creating offer:', error);
+            }
+        }
+    }
+
+    async handleOffer(data) {
+        const { from, offer } = data;
+
+        if (!this.localStream) return;
+
+        if (!this.peerConnections.has(from)) {
+            await this.createPeerConnection(from, false);
+        }
+
+        const pc = this.peerConnections.get(from);
+
+        try {
+            await pc.setRemoteDescription(new RTCSessionDescription(offer));
+            const answer = await pc.createAnswer();
+            await pc.setLocalDescription(answer);
+
+            socket.emit('webrtc-answer', {
+                to: from,
+                from: socket.id,
+                answer: answer
+            });
+        } catch (error) {
+            console.error('❌ Error handling offer:', error);
+        }
+    }
+
+    async handleAnswer(data) {
+        const { from, answer } = data;
+        const pc = this.peerConnections.get(from);
+
+        if (pc) {
+            try {
+                await pc.setRemoteDescription(new RTCSessionDescription(answer));
+            } catch (error) {
+                console.error('❌ Error handling answer:', error);
+            }
+        }
+    }
+
+    async handleIceCandidate(data) {
+        const { from, candidate } = data;
+        const pc = this.peerConnections.get(from);
+
+        if (pc) {
+            try {
+                await pc.addIceCandidate(new RTCIceCandidate(candidate));
+            } catch (error) {
+                console.error('❌ Error adding ICE candidate:', error);
+            }
+        }
+    }
+
+    removePeerConnection(socketId) {
+        const pc = this.peerConnections.get(socketId);
+        if (pc) {
+            pc.close();
+            this.peerConnections.delete(socketId);
+        }
+
+        this.removeRemoteAudio(socketId);
+        this.remoteStreams.delete(socketId);
     }
 }
 
@@ -247,8 +617,8 @@ const gridHelper = new THREE.GridHelper(50, 50, 0x444444, 0x888888);
 scene.add(gridHelper);
 
 const planeGem = new THREE.PlaneGeometry(50, 50);
-const planeMaterial = new THREE.MeshStandardMaterial({ 
-    color: 0xaaaaaa, 
+const planeMaterial = new THREE.MeshStandardMaterial({
+    color: 0xaaaaaa,
     side: THREE.DoubleSide,
     transparent: true,
     opacity: 0.8
@@ -320,7 +690,7 @@ socket.on('connect', () => {
     console.log('✅ Connected to server');
     const loadingEl = document.getElementById('loading');
     if (loadingEl) loadingEl.style.display = 'none';
-    
+
     console.log('🏠 Joining workspace:', currentWorkspaceId);
     socket.emit('joinWorkspace', {
         workspaceId: currentWorkspaceId,
@@ -351,7 +721,7 @@ socket.on('modelMoved', ({ modelId, position, rotation, scale }) => {
         if (position) model.position.set(position.x, position.y, position.z);
         if (rotation) model.rotation.set(rotation.x, rotation.y, rotation.z);
         if (scale) model.scale.set(scale.x, scale.y, scale.z);
-        
+
         // Update controls if this is the selected model
         if (selectedModel === model) {
             updateModelControlsDisplay();
@@ -469,27 +839,27 @@ function updateUserVoiceStatus(userId, isSpeaking) {
 function setupFileUpload() {
     const fileUploadArea = document.getElementById('fileUploadArea');
     const fileInput = document.getElementById('fileInput');
-    
+
     // Click to upload
     fileUploadArea.addEventListener('click', () => {
         fileInput.click();
     });
-    
+
     // File input change
     fileInput.addEventListener('change', (e) => {
         handleFiles(e.target.files);
     });
-    
+
     // Drag and drop
     fileUploadArea.addEventListener('dragover', (e) => {
         e.preventDefault();
         fileUploadArea.classList.add('dragover');
     });
-    
+
     fileUploadArea.addEventListener('dragleave', () => {
         fileUploadArea.classList.remove('dragover');
     });
-    
+
     fileUploadArea.addEventListener('drop', (e) => {
         e.preventDefault();
         fileUploadArea.classList.remove('dragover');
@@ -515,13 +885,13 @@ function isValidModelFile(file) {
 
 function loadModelFileDirectly(file) {
     console.log('📤 Loading model directly:', file.name);
-    
+
     const modelId = `model_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
     const fileType = file.name.toLowerCase().split('.').pop();
-    
+
     const reader = new FileReader();
-    
-    reader.onload = function(e) {
+
+    reader.onload = function (e) {
         try {
             if (fileType === 'gltf') {
                 const gltfData = JSON.parse(e.target.result);
@@ -536,7 +906,7 @@ function loadModelFileDirectly(file) {
             alert('Error loading model: ' + error.message);
         }
     };
-    
+
     if (fileType === 'glb') {
         reader.readAsArrayBuffer(file);
     } else {
@@ -546,12 +916,12 @@ function loadModelFileDirectly(file) {
 
 function loadGLTFFromData(gltfData, fileName, modelId) {
     console.log('🔄 Loading GLTF data...');
-    
-    gltfLoader.parse(JSON.stringify(gltfData), '', function(gltf) {
+
+    gltfLoader.parse(JSON.stringify(gltfData), '', function (gltf) {
         const model = gltf.scene;
         setupModel(model, { name: fileName, fileType: 'gltf' }, modelId);
         console.log('✅ GLTF model loaded successfully');
-    }, function(error) {
+    }, function (error) {
         console.error('❌ GLTF loading failed:', error);
         alert('Failed to load GLTF model: ' + error.message);
     });
@@ -559,12 +929,12 @@ function loadGLTFFromData(gltfData, fileName, modelId) {
 
 function loadGLBFromBuffer(buffer, fileName, modelId) {
     console.log('🔄 Loading GLB buffer...');
-    
-    gltfLoader.parse(buffer, '', function(gltf) {
+
+    gltfLoader.parse(buffer, '', function (gltf) {
         const model = gltf.scene;
         setupModel(model, { name: fileName, fileType: 'glb' }, modelId);
         console.log('✅ GLB model loaded successfully');
-    }, function(error) {
+    }, function (error) {
         console.error('❌ GLB loading failed:', error);
         alert('Failed to load GLB model: ' + error.message);
     });
@@ -572,14 +942,14 @@ function loadGLBFromBuffer(buffer, fileName, modelId) {
 
 function loadOBJFromText(objText, fileName, modelId) {
     console.log('🔄 Loading OBJ text...');
-    
+
     try {
         const object = objLoader.parse(objText);
-        
+
         // Add basic material to OBJ models
-        object.traverse(function(child) {
+        object.traverse(function (child) {
             if (child.isMesh) {
-                child.material = new THREE.MeshStandardMaterial({ 
+                child.material = new THREE.MeshStandardMaterial({
                     color: 0x888888,
                     metalness: 0.2,
                     roughness: 0.8
@@ -588,7 +958,7 @@ function loadOBJFromText(objText, fileName, modelId) {
                 child.receiveShadow = true;
             }
         });
-        
+
         setupModel(object, { name: fileName, fileType: 'obj' }, modelId);
         console.log('✅ OBJ model loaded successfully');
     } catch (error) {
@@ -602,17 +972,17 @@ function setupModel(model, modelData, modelId) {
     const box = new THREE.Box3().setFromObject(model);
     const size = box.getSize(new THREE.Vector3());
     const center = box.getCenter(new THREE.Vector3());
-    
+
     // Move model so its bottom is on the ground
     model.position.set(0, -box.min.y, 0);
-    
+
     // Scale model if it's too large
     const maxSize = Math.max(size.x, size.y, size.z);
     if (maxSize > 5) {
         const scale = 5 / maxSize;
         model.scale.setScalar(scale);
     }
-    
+
     // Add metadata
     model.userData = {
         id: modelId,
@@ -622,16 +992,16 @@ function setupModel(model, modelData, modelId) {
         originalSize: size,
         originalCenter: center
     };
-    
+
     // Enable shadows for all meshes
     model.traverse((child) => {
         if (child.isMesh) {
             child.castShadow = true;
             child.receiveShadow = true;
-            
+
             // Ensure material exists
             if (!child.material) {
-                child.material = new THREE.MeshStandardMaterial({ 
+                child.material = new THREE.MeshStandardMaterial({
                     color: 0x888888,
                     metalness: 0.2,
                     roughness: 0.8
@@ -639,14 +1009,14 @@ function setupModel(model, modelData, modelId) {
             }
         }
     });
-    
+
     // Add to scene and tracking
     scene.add(model);
     threeDModels[modelId] = model;
-    
+
     console.log('✅ Model added to scene:', modelData.name);
     updateModelsListDisplay();
-    
+
     // Notify other users
     socket.emit('modelUploaded', {
         workspaceId: currentWorkspaceId,
@@ -663,10 +1033,10 @@ function setupModel(model, modelData, modelId) {
 
 function loadThreeDModel(modelData) {
     console.log('🎯 Loading 3D model from data:', modelData);
-    
+
     // Create a placeholder for remote models
     const geometry = new THREE.BoxGeometry(1, 1, 1);
-    const material = new THREE.MeshStandardMaterial({ 
+    const material = new THREE.MeshStandardMaterial({
         color: 0xff6b6b,
         metalness: 0.3,
         roughness: 0.7
@@ -674,16 +1044,16 @@ function loadThreeDModel(modelData) {
     const placeholder = new THREE.Mesh(geometry, material);
     placeholder.castShadow = true;
     placeholder.receiveShadow = true;
-    
+
     // Set position, rotation, scale
     const pos = modelData.position || { x: 0, y: 1, z: 0 };
     const rot = modelData.rotation || { x: 0, y: 0, z: 0 };
     const scale = modelData.scale || { x: 1, y: 1, z: 1 };
-    
+
     placeholder.position.set(pos.x, pos.y, pos.z);
     placeholder.rotation.set(rot.x, rot.y, rot.z);
     placeholder.scale.set(scale.x, scale.y, scale.z);
-    
+
     // Add metadata
     placeholder.userData = {
         id: modelData.id,
@@ -691,7 +1061,7 @@ function loadThreeDModel(modelData) {
         type: '3dmodel',
         originalData: modelData
     };
-    
+
     // Add to scene and tracking
     scene.add(placeholder);
     threeDModels[modelData.id] = placeholder;
@@ -701,7 +1071,7 @@ function loadThreeDModel(modelData) {
 function updateModelsListDisplay() {
     const modelsList = document.getElementById('modelsList');
     const models = Object.values(threeDModels);
-    
+
     if (models.length === 0) {
         modelsList.innerHTML = `
             <div style="text-align: center; color: rgba(255,255,255,0.5); padding: 20px; font-size: 12px;">
@@ -710,7 +1080,7 @@ function updateModelsListDisplay() {
         `;
         return;
     }
-    
+
     modelsList.innerHTML = models.map(model => `
         <div class="model-item ${selectedModel === model ? 'selected' : ''}" 
              onclick="selectModel('${model.userData.id}')">
@@ -731,14 +1101,14 @@ function updateModelsListDisplay() {
 function selectModel(modelId) {
     const model = threeDModels[modelId];
     if (!model) return;
-    
+
     selectedModel = model;
     updateModelsListDisplay();
-    
+
     // Show controls
     const controls = document.getElementById('modelControls');
     controls.style.display = 'block';
-    
+
     // Update control values
     document.getElementById('selectedModelName').textContent = model.userData.name;
     updateModelControlsDisplay();
@@ -746,19 +1116,19 @@ function selectModel(modelId) {
 
 function updateModelControlsDisplay() {
     if (!selectedModel) return;
-    
+
     const pos = selectedModel.position;
     const rot = selectedModel.rotation;
     const scale = selectedModel.scale;
-    
+
     document.getElementById('posX').value = pos.x.toFixed(2);
     document.getElementById('posY').value = pos.y.toFixed(2);
     document.getElementById('posZ').value = pos.z.toFixed(2);
-    
+
     document.getElementById('rotX').value = (rot.x * 180 / Math.PI).toFixed(2);
     document.getElementById('rotY').value = (rot.y * 180 / Math.PI).toFixed(2);
     document.getElementById('rotZ').value = (rot.z * 180 / Math.PI).toFixed(2);
-    
+
     document.getElementById('scaleX').value = scale.x.toFixed(2);
     document.getElementById('scaleY').value = scale.y.toFixed(2);
     document.getElementById('scaleZ').value = scale.z.toFixed(2);
@@ -766,23 +1136,23 @@ function updateModelControlsDisplay() {
 
 function applyModelTransform() {
     if (!selectedModel) return;
-    
+
     const posX = parseFloat(document.getElementById('posX').value) || 0;
     const posY = parseFloat(document.getElementById('posY').value) || 0;
     const posZ = parseFloat(document.getElementById('posZ').value) || 0;
-    
+
     const rotX = (parseFloat(document.getElementById('rotX').value) || 0) * Math.PI / 180;
     const rotY = (parseFloat(document.getElementById('rotY').value) || 0) * Math.PI / 180;
     const rotZ = (parseFloat(document.getElementById('rotZ').value) || 0) * Math.PI / 180;
-    
+
     const scaleX = parseFloat(document.getElementById('scaleX').value) || 1;
     const scaleY = parseFloat(document.getElementById('scaleY').value) || 1;
     const scaleZ = parseFloat(document.getElementById('scaleZ').value) || 1;
-    
+
     selectedModel.position.set(posX, posY, posZ);
     selectedModel.rotation.set(rotX, rotY, rotZ);
     selectedModel.scale.set(scaleX, scaleY, scaleZ);
-    
+
     // Emit changes to other users
     socket.emit('modelMoved', {
         workspaceId: currentWorkspaceId,
@@ -796,22 +1166,22 @@ function applyModelTransform() {
 function focusOnModel(modelId) {
     const model = threeDModels[modelId];
     if (!model) return;
-    
+
     // Calculate bounding box
     const box = new THREE.Box3().setFromObject(model);
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
-    
+
     const maxDim = Math.max(size.x, size.y, size.z);
     const distance = maxDim * 3;
-    
+
     // Animate camera to focus on model
     const targetPosition = new THREE.Vector3(
         center.x + distance,
         center.y + distance * 0.5,
         center.z + distance
     );
-    
+
     // Smooth camera transition
     animateCamera(targetPosition, center);
 }
@@ -819,26 +1189,26 @@ function focusOnModel(modelId) {
 function animateCamera(targetPosition, targetLookAt) {
     const startPosition = camera.position.clone();
     const startTarget = controls.target.clone();
-    
+
     const duration = 1000; // 1 second
     const startTime = Date.now();
-    
+
     function animate() {
         const elapsed = Date.now() - startTime;
         const progress = Math.min(elapsed / duration, 1);
-        
+
         // Smooth easing
         const eased = 1 - Math.pow(1 - progress, 3);
-        
+
         camera.position.lerpVectors(startPosition, targetPosition, eased);
         controls.target.lerpVectors(startTarget, targetLookAt, eased);
         controls.update();
-        
+
         if (progress < 1) {
             requestAnimationFrame(animate);
         }
     }
-    
+
     animate();
 }
 
@@ -848,14 +1218,14 @@ function deleteModel(modelId) {
         if (model) {
             scene.remove(model);
             delete threeDModels[modelId];
-            
+
             if (selectedModel === model) {
                 selectedModel = null;
                 document.getElementById('modelControls').style.display = 'none';
             }
-            
+
             updateModelsListDisplay();
-            
+
             // Notify other users
             socket.emit('modelDeleted', {
                 workspaceId: currentWorkspaceId,
@@ -868,7 +1238,7 @@ function deleteModel(modelId) {
 // Setup model control inputs
 function setupModelControls() {
     const inputs = ['posX', 'posY', 'posZ', 'rotX', 'rotY', 'rotZ', 'scaleX', 'scaleY', 'scaleZ'];
-    
+
     inputs.forEach(inputId => {
         const input = document.getElementById(inputId);
         if (input) {
@@ -876,14 +1246,14 @@ function setupModelControls() {
             input.addEventListener('input', applyModelTransform);
         }
     });
-    
+
     // Focus button
     document.getElementById('focusModelBtn')?.addEventListener('click', () => {
         if (selectedModel) {
             focusOnModel(selectedModel.userData.id);
         }
     });
-    
+
     // Delete button
     document.getElementById('deleteModelBtn')?.addEventListener('click', () => {
         if (selectedModel) {
@@ -906,14 +1276,14 @@ window.addEventListener('mousedown', (e) => {
     if (e.target.closest('.ui-panel') || e.target.closest('button') || e.target.closest('input')) {
         return;
     }
-    
+
     // Don't interfere with orbit controls when right-clicking or middle-clicking
     if (e.button !== 0) return;
-    
+
     mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
     mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
     raycaster.setFromCamera(mouse, camera);
-    
+
     // Check for 3D models first
     const modelMeshes = [];
     Object.values(threeDModels).forEach(model => {
@@ -923,16 +1293,16 @@ window.addEventListener('mousedown', (e) => {
             }
         });
     });
-    
+
     const modelIntersects = raycaster.intersectObjects(modelMeshes);
-    
+
     if (modelIntersects.length > 0) {
         // Find the top-level model object
         let targetModel = modelIntersects[0].object;
         while (targetModel.parent && !targetModel.userData.type) {
             targetModel = targetModel.parent;
         }
-        
+
         if (targetModel.userData.type === '3dmodel') {
             draggingModel = targetModel;
             dragStartTime = Date.now();
@@ -943,11 +1313,11 @@ window.addEventListener('mousedown', (e) => {
             return;
         }
     }
-    
+
     // Check for sticky notes
     const noteMeshes = Object.values(stickyNotes).map(note => note.mesh);
     const noteIntersects = raycaster.intersectObjects(noteMeshes);
-    
+
     if (noteIntersects.length > 0) {
         draggingNote = noteIntersects[0].object;
         dragStartTime = Date.now();
@@ -961,27 +1331,27 @@ window.addEventListener('mousemove', (e) => {
     // Handle model dragging
     if (draggingModel) {
         const dragDistance = Math.sqrt(
-            Math.pow(e.clientX - dragStartPosition.x, 2) + 
+            Math.pow(e.clientX - dragStartPosition.x, 2) +
             Math.pow(e.clientY - dragStartPosition.y, 2)
         );
-        
+
         if (dragDistance > 5 && !isDraggingModel) {
             isDraggingModel = true;
             controls.enabled = false; // Disable orbit controls while dragging
             console.log('🎯 Model drag started');
         }
-        
+
         if (isDraggingModel) {
             mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
             raycaster.setFromCamera(mouse, camera);
-            
+
             const intersects = raycaster.intersectObject(plane);
             if (intersects.length > 0) {
                 const point = intersects[0].point;
                 const oldY = draggingModel.position.y;
                 draggingModel.position.set(point.x, oldY, point.z);
-                
+
                 // Update controls display if this is the selected model
                 if (selectedModel === draggingModel) {
                     updateModelControlsDisplay();
@@ -990,31 +1360,31 @@ window.addEventListener('mousemove', (e) => {
         }
         return;
     }
-    
+
     // Handle note dragging
     if (draggingNote) {
         const dragDistance = Math.sqrt(
-            Math.pow(e.clientX - dragStartPosition.x, 2) + 
+            Math.pow(e.clientX - dragStartPosition.x, 2) +
             Math.pow(e.clientY - dragStartPosition.y, 2)
         );
-        
+
         if (dragDistance > 5 && !isDragging) {
             isDragging = true;
             controls.enabled = false; // Disable orbit controls while dragging
             console.log('📝 Note drag started');
         }
-        
+
         if (isDragging) {
             mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
             mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
             raycaster.setFromCamera(mouse, camera);
-            
+
             const intersects = raycaster.intersectObject(plane);
             if (intersects.length > 0) {
                 const point = intersects[0].point;
                 const stickyNote = draggingNote.userData.stickyNote;
                 stickyNote.setPosition(point);
-                
+
                 socket.emit('updateNote', {
                     noteId: stickyNote.id,
                     updates: {
@@ -1034,10 +1404,10 @@ window.addEventListener('mouseup', (e) => {
             socket.emit('modelMoved', {
                 workspaceId: currentWorkspaceId,
                 modelId: draggingModel.userData.id,
-                position: { 
-                    x: draggingModel.position.x, 
-                    y: draggingModel.position.y, 
-                    z: draggingModel.position.z 
+                position: {
+                    x: draggingModel.position.x,
+                    y: draggingModel.position.y,
+                    z: draggingModel.position.z
                 }
             });
         }
@@ -1045,7 +1415,7 @@ window.addEventListener('mouseup', (e) => {
         draggingModel = null;
         controls.enabled = true; // Re-enable orbit controls
     }
-    
+
     if (draggingNote) {
         if (isDragging) {
             console.log('📝 Note drag ended');
@@ -1061,25 +1431,25 @@ window.addEventListener('click', (e) => {
     if (isDragging || isDraggingModel) {
         return;
     }
-    
+
     // Check if clicked on UI elements
     if (e.target.closest('.ui-panel') || e.target.closest('button') || e.target.closest('input')) {
         return;
     }
-    
+
     // Small delay to distinguish from drag operations
     setTimeout(() => {
         if (isDragging || isDraggingModel) return;
-        
+
         mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
         mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
         raycaster.setFromCamera(mouse, camera);
-        
+
         // Check if clicking on existing objects
         const allMeshes = [
             ...Object.values(stickyNotes).map(note => note.mesh)
         ];
-        
+
         // Add all model meshes
         Object.values(threeDModels).forEach(model => {
             model.traverse(child => {
@@ -1088,16 +1458,16 @@ window.addEventListener('click', (e) => {
                 }
             });
         });
-        
+
         const intersects = raycaster.intersectObjects(allMeshes);
-        
+
         if (intersects.length === 0) {
             // Create sticky note on empty space
             const planeIntersects = raycaster.intersectObject(plane);
             if (planeIntersects.length > 0) {
                 const point = planeIntersects[0].point;
                 console.log('📝 Creating new note at:', point);
-                
+
                 socket.emit('createNote', {
                     text: "New Note",
                     position: { x: point.x, y: point.y, z: point.z },
@@ -1112,17 +1482,17 @@ window.addEventListener('dblclick', (e) => {
     mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
     mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
     raycaster.setFromCamera(mouse, camera);
-    
+
     const meshes = Object.values(stickyNotes).map(note => note.mesh);
     const intersects = raycaster.intersectObjects(meshes);
-    
+
     if (intersects.length > 0) {
         const stickyNote = intersects[0].object.userData.stickyNote;
         if (stickyNote) {
             const newText = prompt('Edit note:', stickyNote.getText());
             if (newText && newText.trim()) {
                 stickyNote.setText(newText.trim());
-                
+
                 socket.emit('updateNote', {
                     noteId: stickyNote.id,
                     updates: { text: newText.trim() }
@@ -1135,7 +1505,7 @@ window.addEventListener('dblclick', (e) => {
 // Helper functions
 function createOtherUser(id, userData) {
     if (otherUsers[id]) return;
-    
+
     const geometry = new THREE.SphereGeometry(0.2, 32, 32);
     const color = userData.avatar?.color || '#ff0000';
     const material = new THREE.MeshStandardMaterial({ color: color });
@@ -1147,7 +1517,7 @@ function createOtherUser(id, userData) {
     );
     mesh.castShadow = true;
     scene.add(mesh);
-    
+
     // Add username label
     const canvas = document.createElement('canvas');
     canvas.width = 256;
@@ -1160,13 +1530,13 @@ function createOtherUser(id, userData) {
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(userData.userInfo?.username || 'User', 128, 32);
-    
+
     const texture = new THREE.CanvasTexture(canvas);
     const spriteMaterial = new THREE.SpriteMaterial({ map: texture, transparent: true });
     const sprite = new THREE.Sprite(spriteMaterial);
     sprite.scale.set(2, 0.5, 1);
     sprite.position.set(0, 0.8, 0);
-    
+
     mesh.add(sprite);
     otherUsers[id] = mesh;
 }
@@ -1184,34 +1554,34 @@ function removeFromOnlineUsers(socketId) {
 function updateOnlineUsersList() {
     const usersList = document.getElementById('usersList');
     if (!usersList) return;
-    
+
     if (Object.keys(onlineUsers).length === 0) {
         usersList.innerHTML = '<div style="color: #666; font-size: 12px;">No other users online</div>';
         return;
     }
-    
+
     usersList.innerHTML = '';
-    
+
     Object.entries(onlineUsers).forEach(([id, user]) => {
         const userDiv = document.createElement('div');
         userDiv.className = 'online-user';
-        
+
         const avatarDiv = document.createElement('div');
         avatarDiv.className = 'user-avatar';
         avatarDiv.style.backgroundColor = user.avatar?.color || '#4ecdc4';
         avatarDiv.textContent = (user.userInfo?.username || 'U')[0].toUpperCase();
-        
+
         const nameDiv = document.createElement('div');
         nameDiv.textContent = user.userInfo?.username || 'Anonymous';
         nameDiv.style.fontSize = '12px';
-        
+
         const statusDiv = document.createElement('div');
         statusDiv.style.width = '8px';
         statusDiv.style.height = '8px';
         statusDiv.style.borderRadius = '50%';
         statusDiv.style.backgroundColor = '#27ae60';
         statusDiv.style.marginLeft = 'auto';
-        
+
         userDiv.appendChild(avatarDiv);
         userDiv.appendChild(nameDiv);
         userDiv.appendChild(statusDiv);
@@ -1228,24 +1598,24 @@ class StickyNote {
         this.mesh = null;
         this.canvas = null;
         this.texture = null;
-        
+
         this.createMesh();
         this.updateVisual();
-        
+
         scene.add(this.mesh);
         stickyNotes[this.id] = this;
     }
-    
+
     createMesh() {
         this.canvas = document.createElement('canvas');
         this.canvas.width = 512;
         this.canvas.height = 320;
-        
+
         this.texture = new THREE.CanvasTexture(this.canvas);
         this.texture.needsUpdate = true;
-        
-        const material = new THREE.MeshBasicMaterial({ 
-            map: this.texture, 
+
+        const material = new THREE.MeshBasicMaterial({
+            map: this.texture,
             side: THREE.DoubleSide,
             transparent: true
         });
@@ -1253,41 +1623,41 @@ class StickyNote {
         this.mesh = new THREE.Mesh(geometry, material);
         this.mesh.position.copy(this.position);
         this.mesh.position.y += 0.6;
-        
+
         this.mesh.userData.stickyNote = this;
         this.mesh.userData.id = this.id;
         this.mesh.userData.type = 'stickyNote';
     }
-    
+
     updateVisual() {
         const ctx = this.canvas.getContext('2d');
         ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
-        
+
         // Note background
         ctx.fillStyle = '#ffff88';
         ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
-        
+
         // Border
         ctx.strokeStyle = '#e6d55a';
         ctx.lineWidth = 8;
         ctx.strokeRect(0, 0, this.canvas.width, this.canvas.height);
-        
+
         // Text
         ctx.fillStyle = '#000';
         ctx.font = 'bold 36px Arial';
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
-        
+
         // Simple text wrapping
         const words = this.text.split(' ');
         const maxWidth = this.canvas.width - 40;
         let line = '';
         let y = 40;
-        
+
         for (let n = 0; n < words.length; n++) {
             const testLine = line + words[n] + ' ';
             const metrics = ctx.measureText(testLine);
-            
+
             if (metrics.width > maxWidth && n > 0) {
                 ctx.fillText(line, 20, y);
                 line = words[n] + ' ';
@@ -1297,25 +1667,25 @@ class StickyNote {
             }
         }
         ctx.fillText(line, 20, y);
-        
+
         this.texture.needsUpdate = true;
     }
-    
+
     setText(newText) {
         this.text = newText;
         this.updateVisual();
     }
-    
+
     setPosition(newPosition) {
         this.position.copy(newPosition);
         this.mesh.position.copy(newPosition);
         this.mesh.position.y += 0.6;
     }
-    
+
     getText() {
         return this.text;
     }
-    
+
     destroy() {
         if (this.mesh) {
             scene.remove(this.mesh);
@@ -1336,16 +1706,16 @@ function createStickyNote(position, text = "New Note", id = null) {
 // Input handlers for avatar movement (only when not using orbit controls)
 document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT') return; // Don't move when typing in inputs
-    
+
     if (e.key == 'ArrowUp') moveZ = -0.05;
     if (e.key == 'ArrowDown') moveZ = 0.05;
     if (e.key == "ArrowLeft") moveX = -0.05;
     if (e.key == 'ArrowRight') moveX = 0.05;
-    
+
     if (e.key === 'c' || e.key === 'C') {
         useAvatarMovement = !useAvatarMovement;
         console.log('🎮 Avatar movement:', useAvatarMovement ? 'enabled' : 'disabled');
-        
+
         if (useAvatarMovement) {
             // When switching to avatar mode, just update the orbit target
             // Don't force camera position - let user maintain their current view
@@ -1380,7 +1750,7 @@ document.getElementById('backBtn')?.addEventListener('click', () => {
 
 document.getElementById('shareBtn')?.addEventListener('click', () => {
     const shareText = `Join my 3D Workspace!\nWorkspace ID: ${currentWorkspaceId}\nOpen: ${window.location.origin}`;
-    
+
     if (navigator.share) {
         navigator.share({
             title: '3D Collaborative Workspace',
@@ -1419,7 +1789,7 @@ document.getElementById('saveBtn')?.addEventListener('click', () => {
             z: note.position.z
         }
     }));
-    
+
     const models = Object.values(threeDModels).map(model => ({
         id: model.userData.id,
         name: model.userData.name,
@@ -1439,13 +1809,13 @@ document.getElementById('saveBtn')?.addEventListener('click', () => {
             z: model.scale.z
         }
     }));
-    
+
     socket.emit('saveWorkspace', {
         workspaceId: currentWorkspaceId,
         notes: notes,
         models: models
     });
-    
+
     const btn = document.getElementById('saveBtn');
     if (btn) {
         const originalText = btn.innerHTML;
@@ -1459,17 +1829,16 @@ document.getElementById('saveBtn')?.addEventListener('click', () => {
 // Animation loop
 function animate() {
     requestAnimationFrame(animate);
-    
-    // Avatar movement (only when enabled)
+
     if (useAvatarMovement) {
         // Move avatar
         avatar.position.x += moveX;
         avatar.position.z += moveZ;
-        
+
         // Update controls target to follow avatar, but don't override camera position
         // This allows free rotation around the avatar
         controls.target.copy(avatar.position);
-        
+
         // Send position updates
         socket.emit('updatePosition', {
             x: avatar.position.x,
@@ -1477,15 +1846,14 @@ function animate() {
             z: avatar.position.z
         });
     }
-    
+
     // Make notes always face camera
     Object.values(stickyNotes).forEach(note => {
         note.mesh.lookAt(camera.position);
     });
-    
-    // Update controls
+
     controls.update();
-    
+
     renderer.render(scene, camera);
 }
 
@@ -1501,9 +1869,9 @@ function init() {
     setupFileUpload();
     setupModelControls();
     animate();
-    
-    console.log('✅ 3D Workspace initialized');
-    console.log('🎯 Controls:');
+
+    console.log(' 3D Workspace initialized');
+    console.log(' Controls:');
     console.log('  - Right-click + drag: Rotate camera');
     console.log('  - Scroll: Zoom in/out');
     console.log('  - Left-click + drag models: Move models');
@@ -1526,4 +1894,4 @@ window.scene = scene;
 window.camera = camera;
 window.controls = controls;
 
-console.log('🎉 3D Workspace module loaded successfully!');
+console.log(' 3D Workspace module loaded successfully!');
