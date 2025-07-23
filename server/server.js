@@ -10,7 +10,9 @@ const path = require('path');
 const workspaceRoutes = require('./routes/workspace');
 const voiceRoutes = require('./routes/voice');
 const authRoutes = require('./routes/auth');
-const modelRoutes = require('./routes/models'); // New 3D models route
+const modelRoutes = require('./routes/models');
+const Note = require('./models/Notes');
+const Workspace = require('./models/Workspace');
 
 const app = express();
 const server = http.createServer(app);
@@ -57,7 +59,7 @@ const workspaceModels = new Map(); // Track 3D models per workspace
 io.on('connection', (socket) => {
     console.log(`🔌 User Connected: ${socket.id}`);
 
-    socket.on('joinWorkspace', (data) => {
+    socket.on('joinWorkspace', async (data) => {
         console.log(`👤 User ${socket.id} joining workspace: ${data.workspaceId}`);
 
         // Join workspace room
@@ -65,6 +67,8 @@ io.on('connection', (socket) => {
         socket.currentWorkspace = data.workspaceId;
         socket.userId = data.userId;
         socket.userInfo = data.userInfo;
+
+
 
         // Track user
         connectedUsers.set(socket.id, {
@@ -107,51 +111,187 @@ io.on('connection', (socket) => {
             avatar: { color: '#' + Math.floor(Math.random() * 16777215).toString(16) }
         });
 
+        try {
+            // Load existing notes from database
+            const existingNotes = await Note.find({
+                workspaceId: data.workspaceId
+            })
+                .populate('createdBy', 'username email')
+                .sort({ createdAt: 1 }); // Oldest first
+
+            console.log(`📚 Found ${existingNotes.length} existing notes for workspace ${data.workspaceId}`);
+
+            // Send existing notes to the joining user
+            existingNotes.forEach(note => {
+                socket.emit('noteCreated', {
+                    note: {
+                        id: note.id,
+                        text: note.text,
+                        position: note.position,
+                        color: note.color,
+                        workspaceId: note.workspaceId,
+                        createdAt: note.createdAt
+                    },
+                    createdBy: {
+                        username: note.createdBy?.username || 'Anonymous',
+                        _id: note.createdBy?._id || 'unknown'
+                    },
+                    isExisting: true // Flag to indicate this is an existing note
+                });
+            });
+
+        } catch (error) {
+            console.error('❌ Error loading existing notes:', error);
+        }
+
         console.log(`✅ User ${data.userInfo?.username || 'Anonymous'} joined workspace ${data.workspaceId}`);
     });
 
     // Sticky notes events
-    socket.on('createNote', (data) => {
+    socket.on('createNote', async (data) => {
         console.log(`📝 Creating note from ${socket.id}:`, {
             text: data.text,
             position: data.position,
             workspace: data.workspaceId
         });
 
-        const noteId = `note_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
-        const noteData = {
-            id: noteId,
-            text: data.text || "New Note",
-            position: data.position,
-            workspaceId: data.workspaceId,
-            createdBy: socket.userId || 'anonymous',
-            createdAt: new Date()
-        };
+        try {
+            // Generate unique note ID
+            const noteId = `note_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-        // Broadcast to ALL users in workspace (including sender)
-        io.to(data.workspaceId).emit('noteCreated', {
-            note: noteData,
-            createdBy: {
-                username: socket.userInfo?.username || 'Anonymous',
-                _id: socket.userId
-            }
-        });
+            // Create note in database
+            const newNote = new Note({
+                id: noteId,
+                text: data.text || "New Note",
+                position: {
+                    x: data.position.x,
+                    y: data.position.y,
+                    z: data.position.z
+                },
+                color: data.color || '#ffff88',
+                workspaceId: data.workspaceId,
+                createdBy: socket.userId || 'anonymous'
+            });
 
-        console.log(`✅ Note ${noteId} broadcasted to workspace ${data.workspaceId}`);
-    });
+            await newNote.save();
+            console.log(`✅ Note ${noteId} saved to database`);
 
-    socket.on('updateNote', (data) => {
-        if (socket.currentWorkspace) {
-            socket.to(socket.currentWorkspace).emit('noteUpdated', {
-                note: { id: data.noteId, ...data.updates }
+            // Update workspace last activity
+            await Workspace.findByIdAndUpdate(data.workspaceId, {
+                lastActivity: new Date()
+            });
+
+            // Prepare note data for broadcasting
+            const noteData = {
+                id: noteId,
+                text: newNote.text,
+                position: newNote.position,
+                color: newNote.color,
+                workspaceId: data.workspaceId,
+                createdBy: socket.userId || 'anonymous',
+                createdAt: newNote.createdAt
+            };
+
+            // Broadcast to ALL users in workspace (including sender)
+            io.to(data.workspaceId).emit('noteCreated', {
+                note: noteData,
+                createdBy: {
+                    username: socket.userInfo?.username || 'Anonymous',
+                    _id: socket.userId
+                }
+            });
+
+            console.log(`✅ Note ${noteId} broadcasted to workspace ${data.workspaceId}`);
+
+        } catch (error) {
+            console.error('❌ Error creating note:', error);
+            socket.emit('noteError', {
+                message: 'Failed to create note',
+                error: error.message
             });
         }
     });
 
-    socket.on('deleteNote', (data) => {
-        if (socket.currentWorkspace) {
-            socket.to(socket.currentWorkspace).emit('noteDeleted', {
-                noteId: data.noteId
+    socket.on('updateNote', async (data) => {
+        console.log(`✏️ Updating note from ${socket.id}:`, data);
+
+        try {
+            // Find and update note in database
+            const updatedNote = await Note.findOneAndUpdate(
+                { id: data.noteId },
+                {
+                    ...data.updates,
+                    lastModifiedBy: socket.userId || 'anonymous'
+                },
+                { new: true }
+            );
+
+            if (!updatedNote) {
+                console.log(`⚠️ Note ${data.noteId} not found in database`);
+                return;
+            }
+
+            console.log(`✅ Note ${data.noteId} updated in database`);
+
+            // Update workspace last activity
+            await Workspace.findByIdAndUpdate(updatedNote.workspaceId, {
+                lastActivity: new Date()
+            });
+
+            // Broadcast to other users in workspace
+            if (socket.currentWorkspace) {
+                socket.to(socket.currentWorkspace).emit('noteUpdated', {
+                    note: {
+                        id: updatedNote.id,
+                        text: updatedNote.text,
+                        position: updatedNote.position,
+                        color: updatedNote.color
+                    }
+                });
+            }
+
+        } catch (error) {
+            console.error('❌ Error updating note:', error);
+            socket.emit('noteError', {
+                message: 'Failed to update note',
+                error: error.message
+            });
+        }
+    });
+
+    socket.on('deleteNote', async (data) => {
+        console.log(`🗑️ Deleting note from ${socket.id}:`, data.noteId);
+
+        try {
+            // Find note first to get workspace info
+            const note = await Note.findOne({ id: data.noteId });
+
+            if (!note) {
+                console.log(`⚠️ Note ${data.noteId} not found`);
+                return;
+            }
+
+            // Delete note from database
+            await Note.deleteOne({ id: data.noteId });
+            console.log(`✅ Note ${data.noteId} deleted from database`);
+
+            // Update workspace last activity
+            await Workspace.findByIdAndUpdate(note.workspaceId, {
+                lastActivity: new Date()
+            });
+
+            // Broadcast to other users in workspace
+            if (socket.currentWorkspace) {
+                socket.to(socket.currentWorkspace).emit('noteDeleted', {
+                    noteId: data.noteId
+                });
+            }
+
+        } catch (error) {
+            console.error('❌ Error deleting note:', error);
+            socket.emit('noteError', {
+                message: 'Failed to delete note',
+                error: error.message
             });
         }
     });

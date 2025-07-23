@@ -3,6 +3,7 @@ const express = require('express');
 const router = express.Router();
 const Workspace = require('../models/Workspace');
 const verifyToken = require('../middleware/auth');
+const Note = require('../models/Notes');
 
 
 // Add this route to the TOP of your server/routes/workspace.js file
@@ -11,18 +12,18 @@ const verifyToken = require('../middleware/auth');
 router.post('/simple', async (req, res) => {
     try {
         const { name, description } = req.body;
-        
+
         // Get user from demo mode or auth
         const isDemo = req.headers.authorization && req.headers.authorization.startsWith('demo_');
         let userId;
-        
+
         if (isDemo) {
             userId = 'demo_user_' + Date.now();
         } else {
             // For now, create a simple user ID if auth fails
             userId = 'user_' + Date.now();
         }
-        
+
         const workspace = new Workspace({
             name: name || 'New Workspace',
             description: description || '',
@@ -43,11 +44,11 @@ router.post('/simple', async (req, res) => {
             notes: [],
             users: []
         });
-        
+
         await workspace.save();
-        
+
         console.log('Simple workspace created:', workspace._id);
-        
+
         res.json({
             success: true,
             data: {
@@ -75,12 +76,14 @@ router.post('/simple', async (req, res) => {
 // Save workspace - FIXED to work with real-time sync
 router.post('/save', verifyToken, async (req, res) => {
     try {
-        const { name, notes, users } = req.body;
+        const { name, notes, users, models } = req.body;
+        console.log(`💾 Saving workspace with ${notes?.length || 0} notes and ${models?.length || 0} models`);
 
         const newWorkspace = new Workspace({
             name,
-            notes,
-            users,
+            notes: notes || [], // Keep for backward compatibility
+            users: users || [],
+            models: models || [], // Add models support
             // Add required fields for the enhanced backend
             createdBy: req.user.userId,
             participants: [{
@@ -99,20 +102,59 @@ router.post('/save', verifyToken, async (req, res) => {
         });
 
         await newWorkspace.save();
-        
+        console.log(`✅ Workspace ${newWorkspace._id} saved to database`);
+
+        // If notes are provided, save them to the Notes collection as well
+        if (notes && notes.length > 0) {
+            try {
+                // Clear existing notes for this workspace (for clean save)
+                await Note.deleteMany({ workspaceId: newWorkspace._id });
+
+                // Save each note to the Notes collection
+                const notesToSave = notes.map(note => ({
+                    id: note.id,
+                    text: note.text,
+                    position: note.position,
+                    color: note.color || '#ffff88',
+                    workspaceId: newWorkspace._id,
+                    createdBy: req.user.userId,
+                    lastModifiedBy: req.user.userId
+                }));
+
+                await Note.insertMany(notesToSave);
+                console.log(`✅ Saved ${notesToSave.length} notes to Notes collection`);
+
+            } catch (noteError) {
+                console.error('⚠️ Error saving notes to Notes collection:', noteError);
+                // Continue anyway - workspace is saved
+            }
+        }
+
         // Notify all users in the workspace about the save
         if (req.io) {
             req.io.to(newWorkspace._id.toString()).emit('workspaceSaved', {
                 workspaceId: newWorkspace._id,
                 name: newWorkspace.name,
-                savedBy: req.user.userId
+                savedBy: req.user.userId,
+                noteCount: notes?.length || 0,
+                modelCount: models?.length || 0
             });
         }
-        
-        res.json({ success: true, id: newWorkspace._id });
+
+        res.json({
+            success: true,
+            id: newWorkspace._id,
+            noteCount: notes?.length || 0,
+            modelCount: models?.length || 0
+        });
+
     } catch (err) {
-        console.error("Save error:", err);
-        res.status(500).json({ success: false, error: 'Failed to save workspace.' });
+        console.error("💥 Save error:", err);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to save workspace.',
+            details: err.message
+        });
     }
 });
 
@@ -128,9 +170,9 @@ router.get('/all', verifyToken, async (req, res) => {
             ],
             isArchived: { $ne: true }
         })
-        .populate('createdBy', 'username email')
-        .sort({ lastActivity: -1 });
-        
+            .populate('createdBy', 'username email')
+            .sort({ lastActivity: -1 });
+
         res.json({ success: true, data: workspaces });
     } catch (err) {
         console.error(err);
@@ -144,49 +186,81 @@ router.get('/:id', verifyToken, async (req, res) => {
         const workspace = await Workspace.findById(req.params.id)
             .populate('createdBy', 'username email')
             .populate('participants.userId', 'username email');
-            
+
         if (!workspace) {
-            return res.status(404).json({ 
-                success: false, 
-                error: 'Workspace not found.' 
+            return res.status(404).json({
+                success: false,
+                error: 'Workspace not found.'
             });
         }
 
         // Check if user has access
         const hasAccess = workspace.createdBy._id.toString() === req.user.userId ||
-                         workspace.participants.some(p => p.userId._id.toString() === req.user.userId) ||
-                         workspace.settings?.isPublic;
+            workspace.participants.some(p => p.userId._id.toString() === req.user.userId) ||
+            workspace.settings?.isPublic;
 
         if (!hasAccess) {
-            return res.status(403).json({ 
-                success: false, 
-                error: 'Access denied.' 
+            return res.status(403).json({
+                success: false,
+                error: 'Access denied.'
             });
+        }
+
+        // Load notes from Notes collection
+        let workspaceNotes = [];
+        try {
+            const notes = await Note.find({ workspaceId: req.params.id })
+                .populate('createdBy', 'username email')
+                .sort({ createdAt: 1 });
+
+            workspaceNotes = notes.map(note => ({
+                id: note.id,
+                text: note.text,
+                position: note.position,
+                color: note.color,
+                createdBy: note.createdBy,
+                createdAt: note.createdAt
+            }));
+
+            console.log(`📚 Loaded ${workspaceNotes.length} notes for workspace ${req.params.id}`);
+        } catch (noteError) {
+            console.error('⚠️ Error loading notes:', noteError);
+            // Fall back to workspace.notes if Notes collection fails
+            workspaceNotes = workspace.notes || [];
         }
 
         // Update user's last active time
         await Workspace.updateOne(
-            { 
-                _id: req.params.id, 
-                'participants.userId': req.user.userId 
+            {
+                _id: req.params.id,
+                'participants.userId': req.user.userId
             },
-            { 
-                $set: { 
+            {
+                $set: {
                     'participants.$.lastActive': new Date(),
                     lastActivity: new Date()
                 }
             }
         );
 
-        res.json({ 
-            success: true, 
-            workspace: workspace 
+        // Return workspace with notes from both sources
+        const responseData = {
+            ...workspace.toObject(),
+            notes: workspaceNotes, // Use notes from Notes collection
+            noteCount: workspaceNotes.length
+        };
+
+        res.json({
+            success: true,
+            workspace: responseData
         });
+
     } catch (err) {
-        console.error('Load Error:', err);
-        res.status(500).json({ 
-            success: false, 
-            error: 'Failed to load workspace.' 
+        console.error('💥 Load Error:', err);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to load workspace.',
+            details: err.message
         });
     }
 });
@@ -199,14 +273,14 @@ router.post('/:id/join', verifyToken, async (req, res) => {
 
         const workspace = await Workspace.findById(workspaceId);
         if (!workspace) {
-            return res.status(404).json({ 
-                success: false, 
-                message: 'Workspace not found' 
+            return res.status(404).json({
+                success: false,
+                message: 'Workspace not found'
             });
         }
 
         // Check if already a participant
-        const existingParticipant = workspace.participants.find(p => 
+        const existingParticipant = workspace.participants.find(p =>
             p.userId.toString() === userId
         );
 
@@ -238,9 +312,9 @@ router.post('/:id/join', verifyToken, async (req, res) => {
         });
     } catch (error) {
         console.error('Join workspace error:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Server error' 
+        res.status(500).json({
+            success: false,
+            message: 'Server error'
         });
     }
 });
@@ -288,9 +362,9 @@ router.post('/', verifyToken, async (req, res) => {
         });
     } catch (error) {
         console.error('Create workspace error:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Server error' 
+        res.status(500).json({
+            success: false,
+            message: 'Server error'
         });
     }
 });
@@ -303,23 +377,23 @@ router.put('/:id', verifyToken, async (req, res) => {
 
         const workspace = await Workspace.findById(workspaceId);
         if (!workspace) {
-            return res.status(404).json({ 
-                success: false, 
-                message: 'Workspace not found' 
+            return res.status(404).json({
+                success: false,
+                message: 'Workspace not found'
             });
         }
 
         // Check permissions
         const hasPermission = workspace.createdBy.toString() === req.user.userId ||
-                             workspace.participants.some(p => 
-                                 p.userId.toString() === req.user.userId && 
-                                 ['owner', 'admin', 'editor'].includes(p.role)
-                             );
+            workspace.participants.some(p =>
+                p.userId.toString() === req.user.userId &&
+                ['owner', 'admin', 'editor'].includes(p.role)
+            );
 
         if (!hasPermission) {
-            return res.status(403).json({ 
-                success: false, 
-                message: 'Permission denied' 
+            return res.status(403).json({
+                success: false,
+                message: 'Permission denied'
             });
         }
 
@@ -328,7 +402,7 @@ router.put('/:id', verifyToken, async (req, res) => {
         if (users !== undefined) workspace.users = users;
         if (name !== undefined) workspace.name = name;
         if (description !== undefined) workspace.description = description;
-        
+
         workspace.lastActivity = new Date();
         await workspace.save();
 
@@ -349,9 +423,9 @@ router.put('/:id', verifyToken, async (req, res) => {
         });
     } catch (error) {
         console.error('Update workspace error:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Server error' 
+        res.status(500).json({
+            success: false,
+            message: 'Server error'
         });
     }
 });
@@ -361,17 +435,17 @@ router.delete('/:id', verifyToken, async (req, res) => {
     try {
         const workspace = await Workspace.findById(req.params.id);
         if (!workspace) {
-            return res.status(404).json({ 
-                success: false, 
-                message: 'Workspace not found' 
+            return res.status(404).json({
+                success: false,
+                message: 'Workspace not found'
             });
         }
 
         // Only owner can delete
         if (workspace.createdBy.toString() !== req.user.userId) {
-            return res.status(403).json({ 
-                success: false, 
-                message: 'Only workspace owner can delete' 
+            return res.status(403).json({
+                success: false,
+                message: 'Only workspace owner can delete'
             });
         }
 
@@ -393,9 +467,9 @@ router.delete('/:id', verifyToken, async (req, res) => {
         });
     } catch (error) {
         console.error('Delete workspace error:', error);
-        res.status(500).json({ 
-            success: false, 
-            message: 'Server error' 
+        res.status(500).json({
+            success: false,
+            message: 'Server error'
         });
     }
 });

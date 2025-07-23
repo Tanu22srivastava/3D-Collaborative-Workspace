@@ -1,3 +1,4 @@
+
 // Import Three.js modules
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -816,6 +817,30 @@ socket.on('voiceStreamStopped', ({ userId }) => {
     // Update UI to show user stopped speaking
     updateUserVoiceStatus(userId, false);
     voiceChat.removeRemoteAudio(userId);
+});
+
+socket.on('noteError', (data) => {
+    console.error('❌ Note error:', data);
+    alert('Note error: ' + data.message);
+});
+
+socket.on('workspaceSaved', (data) => {
+    console.log('✅ Workspace saved notification:', data);
+    if (data.savedBy !== currentUser._id) {
+        // Show notification that someone else saved
+        const notification = document.createElement('div');
+        notification.style.cssText = `
+            position: fixed; top: 20px; right: 20px; 
+            background: rgba(78, 205, 196, 0.9); 
+            color: white; padding: 10px 15px; 
+            border-radius: 8px; font-size: 14px;
+            z-index: 10000;
+        `;
+        notification.textContent = `Workspace saved by another user (${data.noteCount} notes)`;
+        document.body.appendChild(notification);
+        
+        setTimeout(() => notification.remove(), 3000);
+    }
 });
 
 function updateUserVoiceStatus(userId, isSpeaking) {
@@ -1779,7 +1804,10 @@ document.getElementById('copyIdBtn')?.addEventListener('click', () => {
     });
 });
 
-document.getElementById('saveBtn')?.addEventListener('click', () => {
+// Enhanced save button handler - ADD THIS to your workspace.js
+document.getElementById('saveBtn')?.addEventListener('click', async () => {
+    console.log('💾 Starting workspace save...');
+
     const notes = Object.values(stickyNotes).map(note => ({
         id: note.id,
         text: note.getText(),
@@ -1787,7 +1815,8 @@ document.getElementById('saveBtn')?.addEventListener('click', () => {
             x: note.position.x,
             y: note.position.y,
             z: note.position.z
-        }
+        },
+        color: '#ffff88' // Default color
     }));
 
     const models = Object.values(threeDModels).map(model => ({
@@ -1810,19 +1839,51 @@ document.getElementById('saveBtn')?.addEventListener('click', () => {
         }
     }));
 
-    socket.emit('saveWorkspace', {
-        workspaceId: currentWorkspaceId,
-        notes: notes,
-        models: models
-    });
+    console.log(`💾 Saving ${notes.length} notes and ${models.length} models`);
 
-    const btn = document.getElementById('saveBtn');
-    if (btn) {
-        const originalText = btn.innerHTML;
-        btn.innerHTML = '✅ Saved!';
-        setTimeout(() => {
-            btn.innerHTML = originalText;
-        }, 2000);
+    try {
+        const response = await fetch(`${API_BASE}/workspace/save`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': authToken
+            },
+            body: JSON.stringify({
+                name: `Workspace ${new Date().toLocaleDateString()}`,
+                notes: notes,
+                models: models,
+                users: Object.entries(onlineUsers).map(([id, user]) => ({
+                    id,
+                    position: otherUsers[id]?.position || { x: 0, y: 0.2, z: 0 },
+                    color: user.avatar?.color || '#4ecdc4'
+                }))
+            })
+        });
+
+        const result = await response.json();
+
+        if (result.success) {
+            console.log('✅ Workspace saved successfully!', result);
+
+            const btn = document.getElementById('saveBtn');
+            if (btn) {
+                const originalText = btn.innerHTML;
+                btn.innerHTML = `✅ Saved! (${result.noteCount} notes)`;
+                setTimeout(() => {
+                    btn.innerHTML = originalText;
+                }, 3000);
+            }
+
+            // Show success message
+            alert(`Workspace saved successfully!\n${result.noteCount} notes saved\n${result.modelCount} models saved`);
+        } else {
+            console.error('❌ Save failed:', result.error);
+            alert('Failed to save workspace: ' + result.error);
+        }
+
+    } catch (error) {
+        console.error('❌ Save error:', error);
+        alert('Error saving workspace. Please try again.');
     }
 });
 
