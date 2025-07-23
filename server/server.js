@@ -296,7 +296,17 @@ io.on('connection', (socket) => {
         
         socket.emit('debugResponse', debugInfo);
     });
+
+    
 });
+
+
+
+
+
+
+
+
 
 // Error handling middleware
 app.use((req, res) => {
